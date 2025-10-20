@@ -1,0 +1,709 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>myExternalClassificationDetector</title>
+
+    <style>
+        /* Minimal and simple inline CSS */
+        body { 
+            font-family: 'Inter', sans-serif; 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            margin: 20px; 
+            background-color: #f8faff; /* Light blue background */
+        }
+        #myContainer { 
+            max-width: 550px; 
+            width: 100%; 
+            background: white; 
+            padding: 20px; 
+            border-radius: 12px; 
+            box-shadow: 0 6px 15px rgba(0, 0, 0, 0.1); 
+            margin-bottom: 20px;
+        }
+        #myCanvas { 
+            border: 3px solid #0f9d58; /* Green border */
+            border-radius: 8px; 
+            margin-top: 20px; 
+            background-color: #333; 
+            width: 100%; 
+            height: auto;
+            max-width: 400px; 
+            aspect-ratio: 1 / 1; 
+            display: block;
+        }
+        #myVideo { 
+            display: none; 
+        } 
+        .myButton { 
+            background-color: #0f9d58; /* Google Green */
+            color: white; 
+            padding: 10px 15px; 
+            border: none; 
+            border-radius: 6px; 
+            cursor: pointer; 
+            font-size: 16px; 
+            margin-top: 10px; 
+            width: 100%; 
+            box-sizing: border-box;
+            transition: background-color 0.3s, transform 0.1s;
+        }
+        .myButton:hover { 
+            background-color: #0c8045; 
+        }
+        .myButton:active {
+            transform: translateY(1px);
+        }
+        .myButton:disabled { 
+            background-color: #ccc; 
+            cursor: not-allowed; 
+        }
+        .myStatus { 
+            margin-top: 10px; 
+            font-weight: bold; 
+            color: #3c4043; 
+            text-align: center; 
+            padding: 12px; 
+            border-radius: 6px; 
+            background-color: #e6ffed;
+            border: 1px solid #0f9d58;
+        }
+        .myLabel { 
+            display: block; 
+            margin-top: 10px; 
+            margin-bottom: 4px; 
+            font-weight: 600; 
+            font-size: 0.95em;
+            color: #3c4043;
+        }
+        .myInput, .mySelect, .myTextarea { 
+            width: 100%; 
+            padding: 10px; 
+            border: 1px solid #dadce0; 
+            border-radius: 6px; 
+            box-sizing: border-box; 
+            font-size: 14px;
+            margin-bottom: 5px;
+        }
+        .myGroup { 
+            border: 1px dashed #c0c0c0; 
+            padding: 15px; 
+            border-radius: 8px; 
+            margin-top: 20px; 
+            background-color: #fafafa;
+        }
+        .myGrid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+        }
+        @media (max-width: 500px) {
+            .myGrid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+    
+    <!-- TensorFlow Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@0.0.1-alpha.9/dist/tf-tflite.min.js"></script>
+</head>
+<body>
+
+    <script>
+        // =================================================================
+        // 🚀 USER-CONFIGURABLE MODEL SETTINGS (Defaults)
+        // NOTE: Default URL is a standard TFJS MobileNet model. Replace with your
+        // Edge Impulse TFLite file URL if you want to use it directly.
+        // =================================================================
+        let myModelConfig = {
+            // Placeholder: Use your Edge Impulse TFLite URL here.
+            myDefaultUrl: 'https://tfhub.dev/google/tfjs-model/imagenet/mobilenet_v2_100_224/classification/3/default/1/model.json', 
+            myInputResolution: 224, // Common size for classification models
+            myInputChannels: 3,     // RGB
+            myDisplayThreshold: 0.70, // Confidence score needed to display the prediction
+            // These labels must match the order of the model's output classes.
+            myLabelsExample: ['class_1', 'class_2', 'class_3', 'class_4'],
+            myClassLabels: ['cat', 'dog', 'tree', 'flower'], 
+        };
+
+        // =================================================================
+        // ⚙️ INTERNAL VARIABLES 
+        // =================================================================
+        let myTfLiteModel = null;
+        let myIsWebcamReady = false;
+        let myCanvasElement = null;
+        let myVideoElement = null;
+        let myContext = null;
+        let myStatusElement = null;
+        let myAnimationFrameId = null;
+        
+        // Input references
+        let myFileInput = null;
+        let myUrlInput = null;
+        let myResolutionInput = null;
+        let myChannelsInput = null;
+        let myLabelsInput = null;
+        let myThresholdInput = null;
+
+        // Derived variable
+        let myInputSize = myModelConfig.myInputResolution;
+
+        // =================================================================
+        // 🏠 HTML SETUP AND CONFIGURATION MANAGEMENT
+        // =================================================================
+        
+        /**
+         * @function myCreateConfigGroup
+         * Creates the dedicated configuration inputs group elements.
+         */
+        function myCreateConfigGroup(myControlsDiv) {
+            const myConfigGroup = document.createElement('div');
+            myConfigGroup.className = 'myGroup';
+            myConfigGroup.style.borderColor = '#0f9d58';
+            myConfigGroup.style.backgroundColor = '#f7fff9';
+
+            const myConfigTitle = document.createElement('h2');
+            myConfigTitle.style.fontSize = '1.2em';
+            myConfigTitle.style.fontWeight = 'bold';
+            myConfigTitle.style.marginBottom = '15px';
+            myConfigTitle.style.color = '#0f9d58';
+            myConfigTitle.textContent = 'Classification Model Configuration';
+            myConfigGroup.appendChild(myConfigTitle);
+
+            const myGridContainer = document.createElement('div');
+            myGridContainer.className = 'myGrid';
+
+            // 1. Input Resolution
+            let myDiv = document.createElement('div');
+            myDiv.innerHTML = '<label for="myResolutionInput" class="myLabel">Resolution (H x W in Pixels):</label>';
+            myResolutionInput = document.createElement('input');
+            myResolutionInput.type = 'number';
+            myResolutionInput.id = 'myResolutionInput';
+            myResolutionInput.className = 'myInput';
+            myResolutionInput.min = '32';
+            myDiv.appendChild(myResolutionInput);
+            myGridContainer.appendChild(myDiv);
+
+            // 2. Color Format (Channels)
+            myDiv = document.createElement('div');
+            myDiv.innerHTML = '<label for="myChannelsInput" class="myLabel">Color Format (Channels):</label>';
+            myChannelsInput = document.createElement('select');
+            myChannelsInput.id = 'myChannelsInput';
+            myChannelsInput.className = 'mySelect';
+            myChannelsInput.innerHTML = `
+                <option value="3">RGB (3 Channels)</option>
+                <option value="1">Grayscale (1 Channel)</option>
+            `;
+            myDiv.appendChild(myChannelsInput);
+            myGridContainer.appendChild(myDiv);
+            
+            // 3. Display Threshold
+            myDiv = document.createElement('div');
+            myDiv.innerHTML = '<label for="myThresholdInput" class="myLabel">Display Threshold (0.0 - 1.0):</label>';
+            myThresholdInput = document.createElement('input');
+            myThresholdInput.type = 'number';
+            myThresholdInput.id = 'myThresholdInput';
+            myThresholdInput.className = 'myInput';
+            myThresholdInput.min = '0.0';
+            myThresholdInput.max = '1.0';
+            myThresholdInput.step = '0.05';
+            myDiv.appendChild(myThresholdInput);
+            myGridContainer.appendChild(myDiv);
+
+            // 4. Empty slot for spacing in the grid
+            myGridContainer.appendChild(document.createElement('div')); 
+
+            myConfigGroup.appendChild(myGridContainer);
+
+            // 5. Class Labels
+            const myLabelLabels = document.createElement('label');
+            myLabelLabels.htmlFor = 'myLabelsInput';
+            myLabelLabels.className = 'myLabel';
+            myLabelLabels.style.marginTop = '15px';
+            myLabelLabels.textContent = 'Class Labels (Comma-separated, order MUST match model output):';
+            myConfigGroup.appendChild(myLabelLabels);
+
+            myLabelsInput = document.createElement('textarea');
+            myLabelsInput.id = 'myLabelsInput';
+            myLabelsInput.rows = '2';
+            myLabelsInput.className = 'myTextarea';
+            myConfigGroup.appendChild(myLabelsInput);
+            
+            // Apply Button
+            const myApplyButton = document.createElement('button');
+            myApplyButton.className = 'myButton';
+            myApplyButton.style.backgroundColor = '#1a73e8'; /* Blue for Apply */
+            myApplyButton.textContent = 'Apply Config & Prepare to Load Model';
+            myApplyButton.onclick = myApplyConfigAndRestart;
+            myConfigGroup.appendChild(myApplyButton);
+
+            myControlsDiv.appendChild(myConfigGroup);
+        }
+
+        /**
+         * @function mySetInitialConfigValues
+         * Explicitly sets the values of input fields after DOM creation.
+         */
+        function mySetInitialConfigValues() {
+            if (myResolutionInput) {
+                myResolutionInput.value = myModelConfig.myInputResolution;
+                myThresholdInput.value = myModelConfig.myDisplayThreshold;
+                myLabelsInput.value = myModelConfig.myClassLabels.join(', ');
+                // Set initial selection for channels
+                myChannelsInput.value = myModelConfig.myInputChannels; 
+            }
+        }
+        
+        /**
+         * @function myUpdateDerivedConfig
+         * Updates global derived config variables and canvas size.
+         */
+        function myUpdateDerivedConfig() {
+            myInputSize = myModelConfig.myInputResolution;
+            
+            // Update canvas dimensions to match the new resolution
+            if (myCanvasElement) {
+                myCanvasElement.width = myInputSize;
+                myCanvasElement.height = myInputSize;
+            }
+            console.log(`[Config Updated] Resolution: ${myInputSize}x${myInputSize}, Channels: ${myModelConfig.myInputChannels}, Classes: ${myModelConfig.myClassLabels.length}`);
+        }
+
+        /**
+         * @function myApplyConfigAndRestart
+         * Reads input fields, validates, updates myModelConfig, and resets the app.
+         */
+        function myApplyConfigAndRestart() {
+            try {
+                // 1. Resolution
+                const myNewResolution = parseInt(myResolutionInput.value);
+                if (isNaN(myNewResolution) || myNewResolution < 32) {
+                    throw new Error('Resolution must be a positive number of at least 32.');
+                }
+                myModelConfig.myInputResolution = myNewResolution;
+
+                // 2. Channels (Color Format)
+                const myNewChannels = parseInt(myChannelsInput.value);
+                if (myNewChannels !== 1 && myNewChannels !== 3) {
+                    throw new Error('Channels must be 1 (Grayscale) or 3 (RGB).');
+                }
+                myModelConfig.myInputChannels = myNewChannels;
+
+                // 3. Display Threshold
+                const myNewThreshold = parseFloat(myThresholdInput.value);
+                if (isNaN(myNewThreshold) || myNewThreshold < 0.0 || myNewThreshold > 1.0) {
+                    throw new Error('Display Threshold must be between 0.0 and 1.0.');
+                }
+                myModelConfig.myDisplayThreshold = myNewThreshold;
+                
+                // 4. Class Labels
+                let myNewLabels = myLabelsInput.value.split(',').map(myLabel => myLabel.trim()).filter(myLabel => myLabel.length > 0);
+                if (myNewLabels.length < 2) {
+                    throw new Error('Class Labels must be comma-separated and you need at least two classes.');
+                }
+                myModelConfig.myClassLabels = myNewLabels;
+
+                // Update derived and DOM config
+                myUpdateDerivedConfig();
+
+                myStatusElement.textContent = `Config applied! Resolution: ${myModelConfig.myInputResolution}, Channels: ${myModelConfig.myInputChannels}, Classes: ${myModelConfig.myClassLabels.length}. Now, load your model.`;
+                myResetApplication(false); // Reset without clearing config
+            } catch (myError) {
+                myStatusElement.textContent = `Configuration Error: ${myError.message}`;
+                console.error('Configuration Validation Error:', myError);
+            }
+        }
+
+
+        /**
+         * @function myCreateDOM
+         * Initializes all necessary DOM elements.
+         */
+        function myCreateDOM() {
+            const myContainer = document.createElement('div');
+            myContainer.id = 'myContainer';
+            
+            const myTitle = document.createElement('h1');
+            myTitle.style.fontSize = '1.8em';
+            myTitle.style.fontWeight = 'bold';
+            myTitle.style.marginBottom = '15px';
+            myTitle.style.textAlign = 'center';
+            myTitle.style.color = '#3c4043';
+            myTitle.textContent = 'External Classification Detector';
+            myContainer.appendChild(myTitle);
+
+            myStatusElement = document.createElement('p');
+            myStatusElement.id = 'myStatusMessage';
+            myStatusElement.className = 'myStatus';
+            myStatusElement.textContent = '1. Configure Model, 2. Load Model, 3. Start Webcam.';
+            myContainer.appendChild(myStatusElement);
+            
+            const myControlsDiv = document.createElement('div');
+            myControlsDiv.id = 'myControls';
+
+            // Insert Configuration Group
+            myCreateConfigGroup(myControlsDiv);
+            
+            // Explicitly set values after element creation (Fixes display issue)
+            mySetInitialConfigValues();
+
+            // 1. Load from File
+            const myFileGroup = document.createElement('div');
+            myFileGroup.className = 'myGroup';
+            myFileGroup.style.borderColor = '#ff6d00';
+            myFileGroup.style.backgroundColor = '#fff8e1';
+            myFileGroup.style.marginTop = '25px';
+
+            const myFileLabel = document.createElement('p');
+            myFileLabel.style.fontWeight = 'bold';
+            myFileLabel.style.color = '#ff6d00';
+            myFileLabel.textContent = 'Load from Computer File (.tflite):';
+            myFileGroup.appendChild(myFileLabel);
+            
+            myFileInput = document.createElement('input'); 
+            myFileInput.type = 'file';
+            myFileInput.id = 'myFileInput';
+            myFileInput.accept = '.tflite';
+            myFileInput.style.marginTop = '10px';
+            myFileInput.onchange = myLoadFromFile; 
+            myFileGroup.appendChild(myFileInput);
+            myControlsDiv.appendChild(myFileGroup);
+
+            // 2. Load from Default URL
+            const myDefaultUrlButton = document.createElement('button');
+            myDefaultUrlButton.className = 'myButton';
+            myDefaultUrlButton.style.backgroundColor = '#fbbc04'; 
+            myDefaultUrlButton.style.color = '#3c4043';
+            myDefaultUrlButton.textContent = `Load Default URL and Start Webcam`;
+            myDefaultUrlButton.onclick = myLoadFromDefaultUrl;
+            myControlsDiv.appendChild(myDefaultUrlButton);
+
+            // 3. Load from Custom URL
+            const myUrlGroup = document.createElement('div');
+            myUrlGroup.className = 'myGroup';
+            myUrlGroup.style.borderColor = '#1a73e8';
+            myUrlGroup.style.backgroundColor = '#f7faff';
+
+            const myUrlLabel = document.createElement('p');
+            myUrlLabel.style.fontWeight = 'bold';
+            myUrlLabel.style.color = '#1a73e8';
+            myUrlLabel.textContent = 'Load From Custom URL:';
+            myUrlGroup.appendChild(myUrlLabel);
+
+            myUrlInput = document.createElement('input');
+            myUrlInput.type = 'text';
+            myUrlInput.id = 'myUrlInput';
+            myUrlInput.value = myModelConfig.myDefaultUrl; 
+            myUrlInput.placeholder = 'Enter .tflite or .json URL here';
+            myUrlInput.className = 'myInput';
+            myUrlInput.style.marginTop = '8px';
+            myUrlGroup.appendChild(myUrlInput);
+
+            const myCustomUrlButton = document.createElement('button');
+            myCustomUrlButton.className = 'myButton';
+            myCustomUrlButton.style.backgroundColor = '#1a73e8'; 
+            myCustomUrlButton.textContent = 'Load Custom URL and Start Webcam';
+            myCustomUrlButton.onclick = myLoadFromCustomUrl;
+            myUrlGroup.appendChild(myCustomUrlButton);
+            
+            myControlsDiv.appendChild(myUrlGroup);
+
+            // 4. Reset Button 
+            const myResetButton = document.createElement('button');
+            myResetButton.className = 'myButton';
+            myResetButton.textContent = 'Reset / Stop Webcam';
+            myResetButton.onclick = myResetApplication;
+            myResetButton.style.marginTop = '25px'; 
+            myResetButton.style.backgroundColor = '#d93025'; /* Red for Reset */
+            myControlsDiv.appendChild(myResetButton);
+            
+            myContainer.appendChild(myControlsDiv);
+            document.body.appendChild(myContainer);
+
+            // Video and Canvas
+            myVideoElement = document.createElement('video');
+            myVideoElement.id = 'myVideo';
+            myVideoElement.setAttribute('playsinline', '');
+            myVideoElement.setAttribute('autoplay', '');
+            document.body.appendChild(myVideoElement);
+
+            myCanvasElement = document.createElement('canvas');
+            myCanvasElement.id = 'myCanvas';
+            myCanvasElement.width = myModelConfig.myInputResolution;
+            myCanvasElement.height = myModelConfig.myInputResolution; 
+            document.body.appendChild(myCanvasElement);
+
+            myContext = myCanvasElement.getContext('2d');
+            myUpdateDerivedConfig(); 
+        }
+        
+        window.onload = myCreateDOM; 
+
+        // =================================================================
+        // 💻 MODEL LOADING AND STARTUP LOGIC
+        // =================================================================
+        
+        /**
+         * @function myGetAllButtons
+         * Gets all interactive elements to disable them during loading.
+         */
+        function myGetAllButtons() {
+            return [
+                ...document.querySelectorAll('.myButton'),
+                myFileInput,
+                myResolutionInput,
+                myChannelsInput,
+                myLabelsInput,
+                myThresholdInput
+            ];
+        }
+
+        /**
+         * @function myDisableControls
+         * Disables control elements during loading.
+         */
+        function myDisableControls(myDisabled) {
+            myGetAllButtons().forEach(myEl => myEl.disabled = myDisabled);
+            myUrlInput.disabled = myDisabled; 
+        }
+
+        /**
+         * @function myLoadFromDefaultUrl
+         * Wrapper function to load the model from the configured default URL.
+         */
+        function myLoadFromDefaultUrl() {
+            myLoadModelAndStartCamera(myModelConfig.myDefaultUrl);
+        }
+
+        /**
+         * @function myLoadFromCustomUrl
+         * Wrapper function to load the model from the text input URL.
+         */
+        function myLoadFromCustomUrl() {
+            const myCustomUrl = myUrlInput.value.trim();
+            if (myCustomUrl) {
+                myLoadModelAndStartCamera(myCustomUrl);
+            } else {
+                myStatusElement.textContent = 'Error: Please enter a valid URL in the custom URL field.';
+            }
+        }
+
+        /**
+         * @function myLoadFromFile
+         * Handles the change event from the file input to load a local file.
+         */
+        async function myLoadFromFile() {
+            myDisableControls(true);
+            const mySelectedFile = myFileInput.files[0];
+            if (mySelectedFile) {
+                // Read the file content as an ArrayBuffer
+                let myFileBuffer = await new Promise((myResolve, myReject) => {
+                    const myReader = new FileReader();
+                    myReader.onload = () => myResolve(myReader.result);
+                    myReader.onerror = myReject;
+                    myReader.readAsArrayBuffer(mySelectedFile);
+                });
+                myLoadModelAndStartCamera(myFileBuffer);
+            } else {
+                myDisableControls(false); 
+                myStatusElement.textContent = 'Please select a .tflite file first or choose another method.';
+            }
+        }
+
+        /**
+         * @function myLoadModelAndStartCamera
+         * Main function to load the model (File Buffer or URL) and start the webcam.
+         * @param {string|ArrayBuffer} mySource - The URL string or the ArrayBuffer.
+         */
+        async function myLoadModelAndStartCamera(mySource) {
+            myStopInferenceLoop(); 
+            myDisableControls(true);
+
+            const mySourceType = typeof mySource === 'string' ? 'URL' : 'File';
+            const myDisplayPath = typeof mySource === 'string' ? mySource.substring(0, 50) + '...' : 'local file';
+            
+            myStatusElement.textContent = `Loading model from ${mySourceType}: ${myDisplayPath}...`;
+            
+            try {
+                // TFLite.js load function handles both string URLs and ArrayBuffers
+                myTfLiteModel = await tflite.loadTFLiteModel(mySource);
+                
+                myStatusElement.textContent = 'Model loaded successfully! Starting webcam...';
+                
+                await mySetupWebcam();
+
+            } catch (myError) {
+                myStatusElement.textContent = `Failed to load model from ${mySourceType}. Check the console (F12). (Model requires ${myInputSize}x${myInputSize}x${myModelConfig.myInputChannels})`;
+                console.error('Model loading error:', myError);
+                myDisableControls(false);
+            }
+        }
+
+        /**
+         * @function mySetupWebcam
+         * Initializes the webcam stream.
+         */
+        async function mySetupWebcam() {
+            if (myIsWebcamReady) return;
+
+            try {
+                const myStream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        width: myInputSize,
+                        height: myInputSize,
+                        facingMode: 'user'
+                    },
+                    audio: false
+                });
+
+                myVideoElement.srcObject = myStream;
+                await new Promise(myResolve => myVideoElement.onloadedmetadata = myResolve); 
+
+                myVideoElement.play();
+                myIsWebcamReady = true;
+                myStatusElement.textContent = 'Webcam active. Running classification...';
+                myDisableControls(false); 
+
+                myRunInferenceLoop();
+
+            } catch (myError) {
+                myStatusElement.textContent = `Error accessing webcam: ${myError.message}.`;
+                console.error('Webcam access error:', myError);
+                myDisableControls(false);
+            }
+        }
+
+        /**
+         * @function myRunInferenceLoop
+         * The main loop for frame capture and model inference.
+         */
+        function myRunInferenceLoop() {
+            tf.tidy(() => {
+                if (!myTfLiteModel || !myIsWebcamReady) {
+                    return;
+                }
+
+                // 1. Capture and Preprocess Frame
+                myContext.drawImage(myVideoElement, 0, 0, myInputSize, myInputSize);
+                let myInputTensor = tf.browser.fromPixels(myCanvasElement, myModelConfig.myInputChannels);
+
+                // Normalize and add batch dimension [1, H, W, C]
+                let myNormalizedTensor = myInputTensor
+                    .resizeBilinear([myInputSize, myInputSize])
+                    .cast('float32')
+                    .div(255.0) // General normalization
+                    .expandDims(0); 
+
+                // 2. Run Inference
+                const myOutputTensor = myTfLiteModel.predict(myNormalizedTensor);
+
+                // 3. Post-processing (Classification-specific)
+                myPostProcessClassification(myOutputTensor);
+            }); 
+
+            myAnimationFrameId = requestAnimationFrame(myRunInferenceLoop);
+        }
+        
+        /**
+         * @function myPostProcessClassification
+         * Interprets the classification output tensor to find the best prediction.
+         */
+        function myPostProcessClassification(myOutputTensor) {
+            const myScores = myOutputTensor.dataSync();
+            const myNumClasses = myModelConfig.myClassLabels.length;
+
+            if (myScores.length !== myNumClasses) {
+                 console.error(`Model output size mismatch. Expected: ${myNumClasses}, Actual: ${myScores.length}. Check your Class Labels config!`);
+                 return;
+            }
+
+            // 1. Find the index of the max score (the predicted class)
+            let myMaxIndex = 0;
+            let myMaxScore = 0;
+            
+            for (let i = 0; i < myScores.length; i++) {
+                if (myScores[i] > myMaxScore) {
+                    myMaxScore = myScores[i];
+                    myMaxIndex = i;
+                }
+            }
+
+            const myPredictionLabel = myModelConfig.myClassLabels[myMaxIndex] || 'Unknown';
+
+            // Redraw frame
+            myContext.drawImage(myVideoElement, 0, 0, myInputSize, myInputSize); 
+
+            // 2. Display Result Overlay
+            const myMessageHeight = 60;
+            const myMessageY = myInputSize - myMessageHeight;
+            
+            // Background box for text
+            myContext.fillStyle = 'rgba(0, 0, 0, 0.7)';
+            myContext.fillRect(0, myMessageY, myInputSize, myMessageHeight);
+
+            myContext.font = 'bold 20px Inter, sans-serif';
+            myContext.textAlign = 'center';
+            
+            let myMessage = '';
+            
+            if (myMaxScore >= myModelConfig.myDisplayThreshold) {
+                myMessage = `Prediction: ${myPredictionLabel}`;
+                myContext.fillStyle = 'lime';
+            } else {
+                myMessage = `Low Confidence or Unknown`;
+                myContext.fillStyle = 'yellow';
+            }
+            
+            // Prediction Label
+            myContext.fillText(myMessage, myInputSize / 2, myMessageY + 25);
+            
+            // Confidence Score
+            myContext.font = '16px Inter, sans-serif';
+            myContext.fillStyle = 'white';
+            myContext.fillText(`Score: ${(myMaxScore * 100).toFixed(2)}%`, myInputSize / 2, myMessageY + 45);
+        }
+        
+        /**
+         * @function myResetApplication
+         * Stops webcam, clears model reference, resets status, and re-enables controls.
+         */
+        function myResetApplication(myClearModel = true) {
+            myStopInferenceLoop();
+            
+            if (myClearModel) {
+                myTfLiteModel = null;
+            }
+            
+            if (myContext && myCanvasElement) {
+                myContext.clearRect(0, 0, myInputSize, myInputSize);
+                myContext.fillStyle = '#333'; 
+                myContext.fillRect(0, 0, myInputSize, myInputSize);
+            }
+            
+            myStatusElement.textContent = 'Application Reset. Check configuration and load a model to start.';
+            myDisableControls(false); 
+            console.log('Application reset.');
+        }
+
+        /**
+         * @function myStopInferenceLoop
+         * Stops the continuous frame request loop and releases webcam.
+         */
+        function myStopInferenceLoop() {
+            if (myAnimationFrameId) {
+                cancelAnimationFrame(myAnimationFrameId);
+                myAnimationFrameId = null;
+            }
+            if (myVideoElement && myVideoElement.srcObject) {
+                myVideoElement.srcObject.getTracks().forEach(track => track.stop());
+                myVideoElement.srcObject = null;
+            }
+            myIsWebcamReady = false;
+        }
+    </script>
+</body>
+</html>
