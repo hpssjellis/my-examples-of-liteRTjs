@@ -1,0 +1,292 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>myConfigurableFOMODetector</title>
+
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.2.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@0.0.1-alpha.9/dist/tf-tflite.min.js"></script>
+</head>
+<body>
+
+    <script>
+        // =================================================================
+        // 🚀 USER-CONFIGURABLE MODEL SETTINGS (CHANGE THESE FIRST)
+        // =================================================================
+        const myModelConfig = {
+            // The file name of your model in the same directory
+            myModelFileName: 'fomo01.tflite', 
+
+            // The model's expected input resolution (e.g., 240, 96, 160)
+            myInputResolution: 240, 
+
+            // Number of spatial reductions (e.g., 240 / 30 = 8). Used to scale the output grid to the input size.
+            myGridScaleFactor: 8, 
+
+            // Minimum probability to consider a cell a valid detection (0.0 to 1.0)
+            myConfidenceThreshold: 0.5, 
+
+            // The class labels, IN ORDER, with the background class at index 0.
+            myClassLabels: ['background', 'myObjectOne', 'myObjectTwo', 'another_thing'], 
+
+            // Optional: Controls the color data if you use Grayscale (3=RGB, 1=Grayscale)
+            myInputChannels: 3, 
+        };
+        // =================================================================
+        // ⚙️ INTERNAL VARIABLES (DO NOT EDIT)
+        // =================================================================
+        let myTfLiteModel = null;
+        let myIsWebcamReady = false;
+        let myCanvasElement = null;
+        let myVideoElement = null;
+        let myContext = null;
+        let myStatusElement = null;
+        let myAnimationFrameId = null;
+
+        // Derived variables for quick access
+        const myInputSize = myModelConfig.myInputResolution;
+        const myGridSize = myInputSize / myModelConfig.myGridScaleFactor;
+
+        // =================================================================
+        // 🏠 HTML SETUP (Inline CSS and Elements)
+        // =================================================================
+        function myCreateDOM() {
+            // Create minimal CSS for structure, using inline styles for simplicity
+            document.head.innerHTML += `
+                <style>
+                    body { font-family: Arial, sans-serif; display: flex; flex-direction: column; align-items: center; margin: 20px; background-color: #f4f4f9; }
+                    #myControls { margin-bottom: 20px; padding: 15px; background: white; border-radius: 8px; box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1); }
+                    #myCanvas { border: 2px solid #333; border-radius: 8px; margin-top: 10px; background-color: #333; }
+                    #myVideo { display: none; } /* Hidden video to feed the canvas */
+                    .myButton { background-color: #1d4ed8; color: white; padding: 10px 20px; border: none; border-radius: 4px; cursor: pointer; font-size: 16px; }
+                    .myStatus { margin-top: 10px; font-weight: bold; color: #333; text-align: center; }
+                </style>
+            `;
+
+            // Controls Div
+            const myControlsDiv = document.createElement('div');
+            myControlsDiv.id = 'myControls';
+            
+            const myStartButton = document.createElement('button');
+            myStartButton.className = 'myButton';
+            myStartButton.id = 'myStartButton';
+            myStartButton.textContent = `1. Load ${myModelConfig.myModelFileName} and Start Webcam`;
+            myStartButton.onclick = myStartDetection; // Static link to function name
+            myControlsDiv.appendChild(myStartButton);
+
+            myStatusElement = document.createElement('p');
+            myStatusElement.className = 'myStatus';
+            myStatusElement.id = 'myStatusMessage';
+            myStatusElement.textContent = 'Click the button to begin...';
+            myControlsDiv.appendChild(myStatusElement);
+            document.body.appendChild(myControlsDiv);
+
+            // Video Element
+            myVideoElement = document.createElement('video');
+            myVideoElement.id = 'myVideo';
+            myVideoElement.setAttribute('playsinline', '');
+            myVideoElement.setAttribute('autoplay', '');
+            document.body.appendChild(myVideoElement);
+
+            // Canvas Element
+            myCanvasElement = document.createElement('canvas');
+            myCanvasElement.id = 'myCanvas';
+            // Use the configured resolution for the canvas size
+            myCanvasElement.width = myInputSize;
+            myCanvasElement.height = myInputSize; 
+            document.body.appendChild(myCanvasElement);
+
+            myContext = myCanvasElement.getContext('2d');
+        }
+        
+        // =================================================================
+        // 💻 APPLICATION FLOW
+        // =================================================================
+        
+        window.onload = myCreateDOM; // Create everything on load
+
+        /**
+         * @function myStartDetection
+         * Loads the model and starts the webcam.
+         */
+        async function myStartDetection() {
+            const myStartButton = document.getElementById('myStartButton');
+            myStartButton.disabled = true;
+            myStatusElement.textContent = `Loading model ${myModelConfig.myModelFileName}... Please wait.`;
+            
+            myStopInferenceLoop(); // Stop any previous loop
+
+            try {
+                // Load TFLite model from the configured file name
+                myTfLiteModel = await tflite.loadTFLiteModel(myModelConfig.myModelFileName);
+                
+                myStatusElement.textContent = 'Model loaded successfully! Starting webcam...';
+                console.log('TFLite Model Loaded:', myModelConfig.myModelFileName);
+
+                // Start the webcam
+                await mySetupWebcam();
+
+            } catch (myError) {
+                myStatusElement.textContent = `Failed to load model: ${myError.message}. Ensure the file is present.`;
+                console.error('Model loading error:', myError);
+                myStartButton.disabled = false;
+            }
+        }
+
+        /**
+         * @function mySetupWebcam
+         * Initializes the webcam stream.
+         */
+        async function mySetupWebcam() {
+            if (myIsWebcamReady) return;
+
+            try {
+                const myStream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        // Request camera stream size to match the model input size
+                        width: myInputSize,
+                        height: myInputSize,
+                        facingMode: 'user'
+                    },
+                    audio: false
+                });
+
+                myVideoElement.srcObject = myStream;
+                
+                // Use await to ensure video metadata is loaded before playing/processing
+                await new Promise(myResolve => myVideoElement.onloadedmetadata = myResolve);
+
+                myVideoElement.play();
+                myIsWebcamReady = true;
+                myStatusElement.textContent = 'Webcam active. Running inference... (Check Console for Detections)';
+
+                // Start the continuous inference loop
+                myRunInferenceLoop();
+
+            } catch (myError) {
+                myStatusElement.textContent = `Error accessing webcam: ${myError.message}.`;
+                console.error('Webcam access error:', myError);
+                document.getElementById('myStartButton').disabled = false;
+            }
+        }
+
+        /**
+         * @function myRunInferenceLoop
+         * The main loop for frame capture and model inference.
+         */
+        function myRunInferenceLoop() {
+            // tf.tidy automatically manages the memory of all tensors created inside this function
+            tf.tidy(() => {
+                if (!myTfLiteModel || !myIsWebcamReady) {
+                    return;
+                }
+
+                // 1. Capture and Preprocess Frame
+                myContext.drawImage(myVideoElement, 0, 0, myInputSize, myInputSize);
+
+                // Convert canvas image data to a TensorFlow tensor
+                let myInputTensor = tf.browser.fromPixels(myCanvasElement, myModelConfig.myInputChannels);
+
+                // Normalize and add batch dimension [1, H, W, C]
+                let myNormalizedTensor = myInputTensor
+                    .resizeBilinear([myInputSize, myInputSize])
+                    .cast('float32')
+                    .div(255.0)
+                    .expandDims(0); 
+
+                // 2. Run Inference
+                const myOutputTensor = myTfLiteModel.predict(myNormalizedTensor);
+
+                // 3. Post-processing (FOMO-specific)
+                myPostProcessFomo(myOutputTensor);
+            }); 
+
+            // Request the next frame
+            myAnimationFrameId = requestAnimationFrame(myRunInferenceLoop);
+        }
+        
+        /**
+         * @function myPostProcessFomo
+         * Interprets the FOMO output tensor to draw bounding boxes.
+         * @param {tf.Tensor} myOutputTensor - The raw output from the model prediction.
+         */
+        function myPostProcessFomo(myOutputTensor) {
+            // Get raw prediction data and shape info
+            const myPredictionData = myOutputTensor.dataSync();
+            const myOutputShape = myOutputTensor.shape;
+            const myNumClasses = myOutputShape[3]; 
+            const myGridX = myOutputShape[1];
+            const myGridY = myOutputShape[2];
+
+            // Basic check to ensure the model output matches configuration
+            if (myGridX !== myGridSize || myGridY !== myGridSize) {
+                console.error(`ERROR: Model output shape mismatch. Expected grid size ${myGridSize}x${myGridSize}, but got ${myGridX}x${myGridY}.`);
+                return;
+            }
+
+            // Clear the canvas to remove previous frame's detections
+            myContext.clearRect(0, 0, myCanvasElement.width, myCanvasElement.height);
+            myContext.drawImage(myVideoElement, 0, 0, myInputSize, myInputSize); // Redraw the video frame (optional: clear for pure detection)
+
+            let myDetectionsFound = false;
+
+            // Iterate over the prediction grid (i=row, j=column)
+            for (let i = 0; i < myGridSize; i++) {
+                for (let j = 0; j < myGridSize; j++) {
+                    const myCellStartIndex = (i * myGridSize * myNumClasses) + (j * myNumClasses);
+
+                    let myMaxProbability = 0;
+                    let myMaxClassIndex = 0;
+
+                    // Find the highest probability class in this cell
+                    for (let k = 0; k < myNumClasses; k++) {
+                        const myProbability = myPredictionData[myCellStartIndex + k];
+                        if (myProbability > myMaxProbability) {
+                            myMaxProbability = myProbability;
+                            myMaxClassIndex = k;
+                        }
+                    }
+
+                    // Check: Not background class (index 0) AND meets confidence threshold
+                    if (myMaxClassIndex !== 0 && myMaxProbability >= myModelConfig.myConfidenceThreshold) {
+                        myDetectionsFound = true;
+
+                        // Calculate the centroid coordinates in the final canvas space (scaled up)
+                        const myCentroidX = (j * myModelConfig.myGridScaleFactor) + (myModelConfig.myGridScaleFactor / 2);
+                        const myCentroidY = (i * myModelConfig.myGridScaleFactor) + (myModelConfig.myGridScaleFactor / 2);
+                        
+                        const myLabel = myModelConfig.myClassLabels[myMaxClassIndex];
+                        
+                        console.log(`[Detection] Class: ${myLabel}, Conf: ${myMaxProbability.toFixed(3)}, Centroid: (${myCentroidX}, ${myCentroidY})`);
+
+                        // Draw the visualization (inline CSS preference)
+                        myContext.fillStyle = myMaxClassIndex === 1 ? 'rgba(255, 0, 0, 0.8)' : 'rgba(0, 255, 0, 0.8)';
+                        myContext.fillRect(myCentroidX - 4, myCentroidY - 4, 8, 8); // Draw a small square at the centroid
+                        
+                        myContext.font = '10px Arial';
+                        myContext.fillStyle = 'white';
+                        myContext.textAlign = 'center';
+                        myContext.fillText(myLabel, myCentroidX, myCentroidY - 6);
+                    }
+                }
+            }
+            
+            if (!myDetectionsFound) {
+                 // console.log('No object detected above threshold.');
+            }
+        }
+
+        /**
+         * @function myStopInferenceLoop
+         * Stops the continuous frame request loop.
+         */
+        function myStopInferenceLoop() {
+            if (myAnimationFrameId) {
+                cancelAnimationFrame(myAnimationFrameId);
+                myAnimationFrameId = null;
+            }
+        }
+    </script>
+</body>
+</html>

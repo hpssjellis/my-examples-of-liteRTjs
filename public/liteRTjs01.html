@@ -1,0 +1,116 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>liteRT.js Client-Side Model</title>
+</head>
+<body>
+
+    <h1 style="font-family: Arial, sans-serif; color: #333;">liteRT.js On-Device ML Demo</h1>
+    <p style="font-family: Arial, sans-serif;">
+        This demonstrates loading a LiteRT model for fast, client-side inference (e.g., input validation).
+    </p>
+    
+    <div style="margin-top: 20px;">
+        <label for="myInputData" style="font-family: Arial, sans-serif; margin-right: 10px;">Enter a Number:</label>
+        <input type="number" id="myInputData" value="10" style="padding: 5px; font-size: 16px;">
+        <button id="myValidateButton" style="padding: 5px 15px; font-size: 16px; background-color: #007BFF; color: white; border: none; cursor: pointer;">
+            Run Model Check
+        </button>
+    </div>
+    
+    <p id="myModelStatus" style="font-family: monospace; margin-top: 15px; color: orange;">Model Status: Loading...</p>
+    <p id="myPredictionResult" style="font-family: monospace; font-size: 1.2em; color: green;"></p>
+
+    <script src="https://cdn.jsdelivr.net/npm/@litertjs/core@latest/dist/litert.js"></script>
+
+    <script type="module">
+        // Import necessary components from the liteRT.js module
+        import { loadLiteRt, loadAndCompile, Tensor } from 'https://cdn.jsdelivr.net/npm/@litertjs/core@latest/dist/litert-core.js';
+
+        // Use descriptive, 'my' prefixed variables
+        let myLiteRtModel;
+        const myModelPath = 'path/to/my_number_validator.tflite'; // Placeholder for the actual converted model path
+
+        // Use 'async/await' for all promise-based operations
+        async function myInitModel() {
+            try {
+                // 1. Load the LiteRT Wasm files (needed for the runtime)
+                // Note: The WASM files must be hosted on your server.
+                document.getElementById('myModelStatus').textContent = "Model Status: Loading WASM...";
+                // Assuming the WASM files are served from a 'wasm/' subdirectory relative to the script
+                await loadLiteRt('./wasm/'); 
+
+                // 2. Load and compile the TFLite model
+                document.getElementById('myModelStatus').textContent = "Model Status: Compiling Model...";
+                myLiteRtModel = await loadAndCompile(myModelPath, { 
+                    accelerator: 'webgpu' // Use WebGPU for best performance
+                });
+                
+                document.getElementById('myModelStatus').textContent = "Model Status: Ready! (Accelerator: WebGPU)";
+                document.getElementById('myModelStatus').style.color = "blue";
+                
+            } catch (error) {
+                console.error("Error loading LiteRT model:", error);
+                document.getElementById('myModelStatus').textContent = "Model Status: FAILED to load. Check console for details and file paths.";
+                document.getElementById('myModelStatus').style.color = "red";
+            }
+        }
+
+        async function myRunValidation() {
+            if (!myLiteRtModel) {
+                document.getElementById('myPredictionResult').textContent = 'Model is not loaded yet.';
+                return;
+            }
+
+            const myInputValue = parseFloat(document.getElementById('myInputData').value);
+            if (isNaN(myInputValue)) {
+                document.getElementById('myPredictionResult').textContent = 'Please enter a valid number.';
+                return;
+            }
+            
+            document.getElementById('myPredictionResult').textContent = 'Processing...';
+
+            // --- Model Inference Steps ---
+            
+            // 1. Prepare input tensor (e.g., a simple float array)
+            // Assuming the model expects a single float input with shape [1]
+            const myInputDataArray = new Float32Array([myInputValue]);
+            const myInputTensor = await new Tensor(myInputDataArray, [1]).moveTo('webgpu');
+            
+            // 2. Run the model inference
+            const myOutputs = myLiteRtModel(myInputTensor);
+            
+            // 3. Process the output
+            const myOutputTensorCpu = await myOutputs[0].moveTo('wasm'); // Move output back to CPU memory
+            const myOutputData = myOutputTensorCpu.toTypedArray(); // Get the prediction value
+            
+            // 4. Clean up the tensors
+            myInputTensor.delete();
+            myOutputTensorCpu.delete();
+            
+            // --- Display Result (e.g., a simple binary classification: 0 or 1) ---
+            
+            const myPredictionValue = myOutputData[0];
+            let myMessage = `Prediction: ${myPredictionValue.toFixed(4)}. `;
+
+            if (myPredictionValue > 0.5) {
+                myMessage += "Result: Input value is VALID (Score > 0.5)";
+                document.getElementById('myPredictionResult').style.color = "green";
+            } else {
+                myMessage += "Result: Input value is INVALID (Score <= 0.5)";
+                document.getElementById('myPredictionResult').style.color = "red";
+            }
+            
+            document.getElementById('myPredictionResult').textContent = myMessage;
+        }
+
+        // Static link to the function name
+        document.getElementById('myValidateButton').onclick = myRunValidation;
+
+        // Start the process
+        myInitModel();
+
+    </script>
+</body>
+</html>

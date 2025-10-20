@@ -1,0 +1,315 @@
+<!--
+Webcam FOMO Object Detection using TensorFlow.js and a locally loaded TFLite model.
+This application captures live video, preprocesses frames, runs inference using the
+Edge Impulse FOMO model format (240x240 RGB input, 1/8 reduction grid output),
+and logs the detection results to the console.
+-->
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>myFOMO Live Detection</title>
+    <!-- Minimal inline CSS for a simple, clean layout -->
+    <style>
+        body {
+            font-family: Arial, sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 20px;
+            background-color: #f4f4f9;
+        }
+        #myControls {
+            margin-bottom: 20px;
+            padding: 15px;
+            background: white;
+            border-radius: 8px;
+            box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+        }
+        #myVideo, #myCanvas {
+            border: 2px solid #ccc;
+            border-radius: 8px;
+            margin-top: 10px;
+            background-color: #333;
+        }
+        /* Hide the video element since we draw to canvas */
+        #myVideo { display: none; }
+
+        /* Ensure the canvas is visible and maintains a consistent size */
+        #myCanvas {
+            width: 240px;
+            height: 240px;
+        }
+        .myButton {
+            background-color: #4CAF50;
+            color: white;
+            padding: 10px 20px;
+            border: none;
+            border-radius: 4px;
+            cursor: pointer;
+            font-size: 16px;
+        }
+        .myButton:disabled {
+            background-color: #aaa;
+            cursor: not-allowed;
+        }
+        .myStatus {
+            margin-top: 10px;
+            font-weight: bold;
+            color: #333;
+        }
+    </style>
+
+    <!-- Load TensorFlow.js (for utilities like tf.fromPixels, tf.dispose) -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.2.0/dist/tf.min.js"></script>
+    <!-- Load TensorFlow Lite for JS (to interpret the .tflite model) -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@0.0.1-alpha.9/dist/tf-tflite.min.js"></script>
+</head>
+<body>
+
+    <div id="myControls">
+        <label for="myTfliteInput">
+            1. Select Model File (must be named fomo01.tflite):
+        </label>
+        <input type="file" id="myTfliteInput" accept=".tflite" onchange="myHandleFileSelect(this.files)">
+        <p class="myStatus" id="myStatusMessage">Awaiting model file upload...</p>
+    </div>
+
+    <!-- Video element to stream the webcam -->
+    <video id="myVideo" playsinline autoplay></video>
+
+    <!-- Canvas to display the processed video stream (240x240 input size) -->
+    <canvas id="myCanvas" width="240" height="240"></canvas>
+
+    <script>
+        // Use my prefix for global variables as per preference
+        let myTfLiteModel = null;
+        let myIsWebcamReady = false;
+        let myCanvasElement = null;
+        let myVideoElement = null;
+        let myContext = null;
+        let myStatusElement = null;
+        let myAnimationFrameId = null;
+
+        // Configuration for the FOMO model (based on 240x240 input with 1/8 reduction)
+        const myInputSize = 240;
+        const myGridFactor = 8; // FOMO default spatial reduction (240/8 = 30)
+        const myGridSize = myInputSize / myGridFactor; // 30x30 grid
+        const myDetectionThreshold = 0.5; // Minimum probability for detection
+        const myClassLabels = ['background', 'class_01', 'class_02', 'class_N']; // Replace with your actual labels
+
+        window.onload = function() {
+            myCanvasElement = document.getElementById('myCanvas');
+            myVideoElement = document.getElementById('myVideo');
+            myContext = myCanvasElement.getContext('2d');
+            myStatusElement = document.getElementById('myStatusMessage');
+        }
+
+        /**
+         * @function myHandleFileSelect
+         * Handles the user selecting the .tflite file and initiates model loading.
+         * @param {FileList} myFiles - The file list from the input element.
+         */
+        async function myHandleFileSelect(myFiles) {
+            if (myFiles.length === 0) {
+                myTfLiteModel = null;
+                myStatusElement.textContent = 'No file selected. Please choose your fomo01.tflite.';
+                return;
+            }
+
+            const myFile = myFiles[0];
+
+            if (myFile.name !== 'fomo01.tflite') {
+                myStatusElement.textContent = `Error: Expected 'fomo01.tflite', but received '${myFile.name}'.`;
+                return;
+            }
+
+            myStatusElement.textContent = 'Loading model... Please wait.';
+
+            try {
+                // Read the file as an ArrayBuffer
+                const myFileBuffer = await new Promise((resolve, reject) => {
+                    const myReader = new FileReader();
+                    myReader.onload = () => resolve(myReader.result);
+                    myReader.onerror = reject;
+                    myReader.readAsArrayBuffer(myFile);
+                });
+
+                // Load the TFLite model from the ArrayBuffer
+                myTfLiteModel = await tflite.loadTFLiteModel(myFileBuffer);
+
+                myStatusElement.textContent = 'Model loaded successfully! Starting webcam...';
+                console.log('TFLite Model Loaded.', myTfLiteModel);
+                console.log('Model Input Signature:', myTfLiteModel.inputs);
+                console.log('Model Output Signature:', myTfLiteModel.outputs);
+
+                // Now start the webcam
+                await mySetupWebcam();
+
+            } catch (myError) {
+                myStatusElement.textContent = `Failed to load model or start webcam: ${myError.message}`;
+                console.error('Model or Webcam setup error:', myError);
+            }
+        }
+
+        /**
+         * @function mySetupWebcam
+         * Initializes the webcam stream and prepares the video element.
+         */
+        async function mySetupWebcam() {
+            if (myIsWebcamReady) return;
+
+            try {
+                const myStream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        width: myInputSize,
+                        height: myInputSize,
+                        facingMode: 'user'
+                    },
+                    audio: false
+                });
+
+                myVideoElement.srcObject = myStream;
+
+                await new Promise((resolve) => {
+                    myVideoElement.onloadedmetadata = () => {
+                        resolve();
+                    };
+                });
+
+                myVideoElement.play();
+                myIsWebcamReady = true;
+                myStatusElement.textContent = 'Webcam active. Running inference... (Check Console)';
+
+                // Start the continuous inference loop
+                myRunInferenceLoop();
+
+            } catch (myError) {
+                myStatusElement.textContent = `Error accessing webcam: ${myError.message}. Make sure you grant camera access.`;
+                console.error('Webcam access error:', myError);
+            }
+        }
+
+        /**
+         * @function myRunInferenceLoop
+         * The main loop for frame capture and model inference.
+         */
+        function myRunInferenceLoop() {
+            // Cancel previous loop if running
+            if (myAnimationFrameId) {
+                cancelAnimationFrame(myAnimationFrameId);
+            }
+
+            // TensorFlow.js utility to manage tensor memory automatically
+            tf.tidy(() => {
+                if (!myTfLiteModel || !myIsWebcamReady) {
+                    return;
+                }
+
+                // 1. Capture and Preprocess Frame
+                myContext.drawImage(myVideoElement, 0, 0, myInputSize, myInputSize);
+
+                // Convert canvas image data to a TensorFlow tensor
+                let myInputTensor = tf.browser.fromPixels(myCanvasElement);
+
+                // The model input is 240x240x3 RGB
+                // Ensure it's 240x240 (it should be due to drawImage, but keep the resize just in case)
+                if (myInputTensor.shape[0] !== myInputSize || myInputTensor.shape[1] !== myInputSize) {
+                    myInputTensor = tf.image.resizeBilinear(myInputTensor, [myInputSize, myInputSize]);
+                }
+
+                // Normalize the RGB tensor from [0, 255] to [0, 1]
+                const myNormalizedTensor = myInputTensor.cast('float32').div(255.0).expandDims(0); // Add batch dimension
+
+                // 2. Run Inference
+                // The TFLite model expects a single tensor input and returns a single tensor output
+                const myOutputTensor = myTfLiteModel.predict(myNormalizedTensor);
+
+                // 3. Post-processing (FOMO-specific)
+                // The output is a (1, 30, 30, num_classes) tensor.
+                // We need to extract the data and analyze the grid.
+
+                // Get the tensor data as a flat array
+                const myPredictionData = myOutputTensor.dataSync();
+                const myNumClasses = myOutputTensor.shape[3]; // C = number of classes (including background)
+
+                // The output shape must match the expected FOMO output
+                if (myOutputTensor.shape[1] !== myGridSize || myOutputTensor.shape[2] !== myGridSize) {
+                    console.error(`ERROR: Model output shape mismatch. Expected grid size ${myGridSize}x${myGridSize}, but got ${myOutputTensor.shape[1]}x${myOutputTensor.shape[2]}. Skipping frame.`);
+                    return;
+                }
+
+                let myDetectionsFound = false;
+
+                // Iterate over the 30x30 grid (i=row, j=column)
+                for (let i = 0; i < myGridSize; i++) {
+                    for (let j = 0; j < myGridSize; j++) {
+                        // Find the index of the class data for the current cell (i, j)
+                        const myCellStartIndex = (i * myGridSize * myNumClasses) + (j * myNumClasses);
+
+                        // Extract probabilities for all classes in this cell
+                        let myMaxProbability = 0;
+                        let myMaxClassIndex = 0;
+
+                        // Find the highest probability class
+                        for (let k = 0; k < myNumClasses; k++) {
+                            const myProbability = myPredictionData[myCellStartIndex + k];
+                            if (myProbability > myMaxProbability) {
+                                myMaxProbability = myProbability;
+                                myMaxClassIndex = k;
+                            }
+                        }
+
+                        // Check if probability is above threshold and it's NOT the background class (index 0)
+                        if (myMaxClassIndex !== 0 && myMaxProbability >= myDetectionThreshold) {
+                            myDetectionsFound = true;
+
+                            // Calculate the centroid coordinates in the 240x240 input space
+                            const myCentroidX = (j * myGridFactor) + (myGridFactor / 2);
+                            const myCentroidY = (i * myGridFactor) + (myGridFactor / 2);
+
+                            // Log the result to the console
+                            console.log(`
+--- Detection Found ---
+Class Index: ${myMaxClassIndex} (${myClassLabels[myMaxClassIndex]})
+Confidence: ${myMaxProbability.toFixed(3)}
+Centroid (240x240): (${myCentroidX}, ${myCentroidY})
+Grid Cell: (${j}, ${i})
+-----------------------
+                            `);
+
+                            // OPTIONAL: Draw a visualization on the canvas
+                            myContext.fillStyle = myMaxClassIndex === 1 ? 'rgba(255, 0, 0, 0.7)' : 'rgba(0, 255, 0, 0.7)';
+                            myContext.fillRect(myCentroidX - 4, myCentroidY - 4, 8, 8); // Draw a small square at the centroid
+                            myContext.font = '10px Arial';
+                            myContext.fillStyle = 'white';
+                            myContext.textAlign = 'center';
+                            myContext.fillText(myClassLabels[myMaxClassIndex], myCentroidX, myCentroidY - 6);
+                        }
+                    }
+                }
+
+                if (!myDetectionsFound) {
+                    // Log a note if nothing was detected above the threshold
+                    // console.log('No object detected above threshold:', myDetectionThreshold.toFixed(2));
+                }
+            }); // tf.tidy cleans up tensors automatically
+
+            // Request the next frame
+            myAnimationFrameId = requestAnimationFrame(myRunInferenceLoop);
+        }
+
+        /**
+         * @function myStopInferenceLoop
+         * Stops the continuous frame request loop.
+         */
+        function myStopInferenceLoop() {
+            if (myAnimationFrameId) {
+                cancelAnimationFrame(myAnimationFrameId);
+                myAnimationFrameId = null;
+            }
+        }
+    </script>
+</body>
+</html>
