@@ -1,0 +1,266 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>TFLite Model Inspector</title>
+    <!-- Tailwind CSS for modern, responsive styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        body { font-family: 'Inter', sans-serif; background-color: #f7f7f7; }
+        .card { transition: all 0.3s ease; }
+        .card:hover { transform: translateY(-2px); box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1), 0 4px 6px -2px rgba(0, 0, 0, 0.05); }
+        .status-loaded { background-color: #d1fae5; color: #065f46; border-color: #34d399; }
+        .status-error { background-color: #fee2e2; color: #991b1b; border-color: #f87171; }
+        .status-info { background-color: #eff6ff; color: #1e40af; border-color: #60a5fa; }
+    </style>
+    <!-- TensorFlow Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@0.0.1-alpha.9/dist/tf-tflite.min.js"></script>
+</head>
+<body class="p-4 md:p-8">
+
+    <div class="max-w-4xl mx-auto">
+        <h1 class="text-3xl font-extrabold text-gray-900 text-center mb-6">TFLite Model Inspector</h1>
+        <p class="text-center text-gray-600 mb-8">Load a `.tflite` model, view its input/output signature, and run a test inference.</p>
+
+        <!-- Model Loading Section -->
+        <div id="loading-section" class="card bg-white p-6 rounded-xl shadow-lg border border-gray-200 mb-8">
+            <h2 class="text-2xl font-semibold text-purple-700 mb-4 flex items-center">
+                <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"></path></svg>
+                1. Load Model
+            </h2>
+            <div id="model-status" class="status-info p-3 border rounded-lg font-medium mb-4">Awaiting model URL...</div>
+
+            <label for="model-url" class="block text-sm font-medium text-gray-700 mb-1">Model URL (e.g., `model.tflite`)</label>
+            <input type="text" id="model-url" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-purple-500 focus:border-purple-500 mb-4" 
+                   value="./tflite/ei-w7-8-esp32-accel-words-both-better-nn-classifier-tensorflow-lite-float32-model.38.tflite" 
+                   placeholder="Enter the URL of your .tflite file">
+            
+            <button onclick="loadModel()" id="load-button" class="w-full bg-purple-600 hover:bg-purple-700 text-white font-bold py-3 px-4 rounded-lg transition duration-150 shadow-md">
+                Load Model and Inspect
+            </button>
+        </div>
+
+        <!-- Model Inspection Section -->
+        <div id="inspection-section" class="card bg-white p-6 rounded-xl shadow-lg border border-gray-200 mb-8 hidden">
+            <h2 class="text-2xl font-semibold text-purple-700 mb-4 flex items-center">
+                <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2m-9 0V3h4v2m-4 0h4"></path></svg>
+                2. Input & Output Signature
+            </h2>
+            <div id="model-signature" class="space-y-4">
+                <p class="text-sm text-gray-600 italic">
+                    TFLite models can be complex. We need the expected input shape to run a test. 
+                    Refer to your model's documentation (e.g., from Edge Impulse) for the correct shape.
+                </p>
+
+                <!-- Input Shape Prompt -->
+                <div>
+                    <label for="input-shape" class="block text-sm font-medium text-gray-700 mb-1">
+                        Expected Input Shape (e.g., `1, 200, 3` for a batch of 1, 200 time steps, 3 features)
+                    </label>
+                    <input type="text" id="input-shape" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-purple-500 focus:border-purple-500" 
+                           placeholder="Enter comma-separated dimensions, e.g., 1,200,3" value="1, 200, 3">
+                </div>
+                
+                <div id="input-summary" class="status-info p-3 border rounded-lg font-mono text-sm">Input Shape Placeholder</div>
+                <div id="output-summary" class="status-info p-3 border rounded-lg font-mono text-sm">Output Shape Placeholder</div>
+            </div>
+            
+            <button onclick="runInference()" id="run-button" class="mt-6 w-full bg-blue-600 hover:bg-blue-700 text-white font-bold py-3 px-4 rounded-lg transition duration-150 shadow-md" disabled>
+                3. Run Test Inference
+            </button>
+        </div>
+
+        <!-- Inference Output Section -->
+        <div id="output-section" class="card bg-white p-6 rounded-xl shadow-lg border border-gray-200 hidden">
+            <h2 class="text-2xl font-semibold text-purple-700 mb-4 flex items-center">
+                <svg class="w-6 h-6 mr-2" fill="none" stroke="currentColor" viewBox="0 0 24 24" xmlns="http://www.w3.org/2000/svg"><path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.857L13 21l-2.286-6.857L5 12l5.714-2.857L13 3z"></path></svg>
+                4. Inference Results
+            </h2>
+            <div id="inference-status" class="status-info p-3 border rounded-lg font-medium mb-4">Run the test inference to see results.</div>
+            
+            <div class="space-y-3">
+                <div id="output-shape-result" class="bg-gray-100 p-3 rounded-lg font-mono text-sm">Output Shape: N/A</div>
+                <div id="output-data-preview" class="bg-gray-100 p-3 rounded-lg font-mono text-sm break-all">Data Preview (First 10 values): N/A</div>
+            </div>
+        </div>
+
+    </div>
+
+    <script>
+// Global variables
+let tfliteModel = null;
+const statusEl = document.getElementById('model-status');
+const loadBtn = document.getElementById('load-button');
+const runBtn = document.getElementById('run-button');
+const inspectionSection = document.getElementById('inspection-section');
+const outputSection = document.getElementById('output-section');
+const inputShapeEl = document.getElementById('input-shape');
+const inputSummaryEl = document.getElementById('input-summary');
+const outputSummaryEl = document.getElementById('output-summary');
+const outputShapeResultEl = document.getElementById('output-shape-result');
+const outputDataPreviewEl = document.getElementById('output-data-preview');
+const inferenceStatusEl = document.getElementById('inference-status');
+
+/**
+ * Utility function to update the main status message block.
+ * @param {string} message - The message to display.
+ * @param {string} type - 'info', 'loaded', or 'error'.
+ */
+function updateStatus(message, type = 'info') {
+    statusEl.textContent = message;
+    statusEl.className = 'p-3 border rounded-lg font-medium mb-4 ';
+    statusEl.classList.add(`status-${type}`);
+    console.log(`STATUS [${type.toUpperCase()}]: ${message}`);
+}
+
+/**
+ * Clears all dynamic information sections.
+ */
+function resetView() {
+    tfliteModel = null;
+    inspectionSection.classList.add('hidden');
+    outputSection.classList.add('hidden');
+    inputSummaryEl.textContent = 'Input Shape Placeholder';
+    outputSummaryEl.textContent = 'Output Shape Placeholder';
+    outputShapeResultEl.textContent = 'Output Shape: N/A';
+    outputDataPreviewEl.textContent = 'Data Preview (First 10 values): N/A';
+    inferenceStatusEl.textContent = 'Run the test inference to see results.';
+    runBtn.disabled = true;
+}
+
+/**
+ * 1. Loads the TFLite model from the provided URL.
+ */
+async function loadModel() {
+    resetView();
+    const url = document.getElementById('model-url').value.trim();
+    if (!url) {
+        updateStatus('Error: Please enter a model URL.', 'error');
+        return;
+    }
+
+    loadBtn.disabled = true;
+    updateStatus(`Loading model from ${url}...`, 'info');
+
+    try {
+        // Initialize tfjs-tflite (important for some environments)
+        if (typeof tflite.setWasmPath === 'function') {
+            tflite.setWasmPath('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@0.0.1-alpha.9/dist/');
+        }
+
+        // Load the model
+        tfliteModel = await tflite.loadTFLiteModel(url);
+
+        updateStatus('Model loaded successfully! See inspection below.', 'loaded');
+        loadBtn.disabled = false;
+
+        // Show inspection sections
+        inspectionSection.classList.remove('hidden');
+        runBtn.disabled = false;
+
+        // Display input/output placeholders
+        inspectModel();
+
+    } catch (error) {
+        updateStatus(`Model Load Error: ${error.message}. Check URL and CORS.`, 'error');
+        console.error("TFLite Load Error:", error);
+        loadBtn.disabled = false;
+        runBtn.disabled = true;
+        tfliteModel = null;
+    }
+}
+
+/**
+ * 2. Inspects and displays the expected input signature.
+ */
+function inspectModel() {
+    if (!tfliteModel) return;
+
+    // Display a generic placeholder since TFLite metadata is often hidden behind the wrapper.
+    inputSummaryEl.className = 'status-info p-3 border rounded-lg font-mono text-sm';
+    inputSummaryEl.textContent = `Input Tensor Shape: User-defined (e.g., [${inputShapeEl.value}])`;
+
+    outputSummaryEl.className = 'status-info p-3 border rounded-lg font-mono text-sm';
+    outputSummaryEl.textContent = 'Output Tensor Shape: Unknown until test inference is run.';
+}
+
+/**
+ * 3. Runs a dry inference with simulated data based on user input shape.
+ */
+function runInference() {
+    if (!tfliteModel) {
+        inferenceStatusEl.textContent = 'Error: Model not loaded.';
+        inferenceStatusEl.className = 'status-error p-3 border rounded-lg font-medium mb-4';
+        return;
+    }
+
+    // Parse Input Shape
+    const shapeString = inputShapeEl.value.trim();
+    if (!shapeString) {
+        inferenceStatusEl.textContent = 'Error: Please specify the input shape (e.g., 1,200,3).';
+        inferenceStatusEl.className = 'status-error p-3 border rounded-lg font-medium mb-4';
+        return;
+    }
+
+    // Convert string '1, 200, 3' to array [1, 200, 3]
+    const inputShape = shapeString.split(',')
+        .map(s => s.trim())
+        .filter(s => s.length > 0)
+        .map(s => parseInt(s));
+
+    if (inputShape.length === 0 || inputShape.some(dim => isNaN(dim) || dim <= 0)) {
+        inferenceStatusEl.textContent = 'Error: Invalid input shape. Must be positive integers.';
+        inferenceStatusEl.className = 'status-error p-3 border rounded-lg font-medium mb-4';
+        return;
+    }
+
+    inferenceStatusEl.textContent = `Running inference with shape [${inputShape.join(', ')}]...`;
+    inferenceStatusEl.className = 'status-info p-3 border rounded-lg font-medium mb-4';
+    runBtn.disabled = true;
+
+    try {
+        tf.tidy(() => {
+            // 1. Create a dummy input tensor based on user shape
+            const totalElements = inputShape.reduce((a, b) => a * b, 1);
+
+            // Create an array of mock data (using random noise scaled between -1 and 1)
+            const mockData = Array.from({ length: totalElements }, () => Math.random() * 2 - 1);
+
+            // Create the tensor (assume float32 for most TFLite models)
+            const inputTensor = tf.tensor(mockData, inputShape, 'float32');
+
+            // 2. Run Prediction
+            const outputTensor = tfliteModel.predict(inputTensor);
+
+            // 3. Display Results
+            outputSection.classList.remove('hidden');
+
+            const outputShape = outputTensor.shape;
+            const outputData = outputTensor.dataSync();
+
+            outputShapeResultEl.textContent = `Output Tensor Shape: [${outputShape.join(', ')}]`;
+            outputDataPreviewEl.textContent = `Data Preview (First 10 values): [${Array.from(outputData).slice(0, 10).map(v => v.toFixed(4)).join(', ')}${outputData.length > 10 ? ', ...' : ''}]`;
+
+            // Update the Output Signature summary
+            outputSummaryEl.textContent = `Output Tensor Shape: [${outputShape.join(', ')}] (Type: ${outputTensor.dtype})`;
+
+            // Success status
+            inferenceStatusEl.textContent = 'Inference complete! Output data is shown below.';
+            inferenceStatusEl.className = 'status-loaded p-3 border rounded-lg font-medium mb-4';
+        });
+    } catch (error) {
+        inferenceStatusEl.textContent = `Inference Error: ${error.message}. This often means the input shape/data type is incorrect.`;
+        inferenceStatusEl.className = 'status-error p-3 border rounded-lg font-medium mb-4';
+        console.error("TFLite Inference Error:", error);
+    } finally {
+        runBtn.disabled = false;
+        // Dispose any leftover variables
+        tf.disposeVariables();
+    }
+}
+
+    </script>
+</body>
+</html>
