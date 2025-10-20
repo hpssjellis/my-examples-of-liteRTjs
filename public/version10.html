@@ -1,0 +1,687 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>TFLite Model Inspector (Offline)</title>
+
+  <style>
+    /* Base styles */
+    body {
+      font-family: 'Inter', sans-serif;
+      background-color: #f7f7f7;
+      padding: 16px;
+    }
+    .container {
+      max-width: 960px;
+      margin: 0 auto;
+    }
+    /* Card styles */
+    .card {
+      background-color: white;
+      padding: 24px;
+      border-radius: 12px;
+      box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1),
+        0 2px 4px -2px rgba(0, 0, 0, 0.06);
+      border: 1px solid #e5e7eb;
+      margin-bottom: 32px;
+      transition: all 0.3s ease;
+    }
+    .card:hover {
+      transform: translateY(-2px);
+      box-shadow: 0 10px 15px -3px rgba(0, 0, 0, 0.1),
+        0 4px 6px -2px rgba(0, 0, 0, 0.05);
+    }
+
+    /* Status colors */
+    .status {
+      padding: 12px;
+      border-radius: 8px;
+      font-weight: 500;
+      margin-bottom: 16px;
+      border: 1px solid;
+    }
+    .status-loaded {
+      background-color: #d1fae5;
+      color: #065f46;
+      border-color: #34d399;
+    }
+    .status-error {
+      background-color: #fee2e2;
+      color: #991b1b;
+      border-color: #f87171;
+    }
+    .status-info {
+      background-color: #eff6ff;
+      color: #1e40af;
+      border-color: #60a5fa;
+    }
+
+    /* Input and Button styles */
+    .input-text {
+      width: 100%;
+      padding: 12px;
+      border: 1px solid #d1d5db;
+      border-radius: 8px;
+      box-sizing: border-box;
+      margin-bottom: 16px;
+    }
+    .input-file {
+      margin-bottom: 16px;
+    }
+
+    .button {
+      width: 100%;
+      font-weight: bold;
+      padding: 12px 16px;
+      border-radius: 8px;
+      transition: background-color 0.15s;
+      cursor: pointer;
+      box-shadow: 0 2px 4px rgba(0, 0, 0, 0.1);
+      border: none;
+    }
+    .button-purple {
+      background-color: #8b5cf6;
+      color: white;
+    }
+    .button-purple:hover:not(:disabled) {
+      background-color: #7c3aed;
+    }
+    .button-blue {
+      background-color: #3b82f6;
+      color: white;
+      margin-top: 24px;
+    }
+    .button-blue:hover:not(:disabled) {
+      background-color: #2563eb;
+    }
+    .button:disabled {
+      background-color: #ccc;
+      cursor: not-allowed;
+    }
+
+    /* Typography */
+    h1 {
+      font-size: 1.875rem;
+      font-weight: 800;
+      text-align: center;
+      color: #1f2937;
+      margin-bottom: 24px;
+    }
+    h2 {
+      font-size: 1.5rem;
+      font-weight: 600;
+      color: #6d28d9;
+      margin-bottom: 16px;
+      display: flex;
+      align-items: center;
+    }
+    .label {
+      display: block;
+      font-size: 0.875rem;
+      font-weight: 500;
+      color: #374151;
+      margin-bottom: 4px;
+    }
+    .text-detail {
+      font-size: 0.875rem;
+      color: #4b5563;
+      margin-bottom: 32px;
+      text-align: center;
+    }
+
+    /* Results blocks */
+    .result-block {
+      background-color: #f3f4f6;
+      padding: 12px;
+      border-radius: 8px;
+      font-family: monospace;
+      font-size: 0.875rem;
+      word-break: break-all;
+      margin-top: 12px;
+      white-space: pre-wrap;
+    }
+
+    /* Layout & Icon Fix */
+    .flex-row {
+      display: flex;
+      align-items: center;
+    }
+    .flex-row svg {
+      margin-right: 8px;
+      width: 24px;
+      height: 24px;
+    }
+    .layer-list {
+      list-style: none;
+      padding: 0;
+      margin: 0;
+    }
+    .layer-item {
+      padding: 8px;
+      border-bottom: 1px solid #e5e7eb;
+    }
+    .layer-item:last-child {
+      border-bottom: none;
+    }
+
+    /* Hidden helper class */
+    .hidden {
+      display: none !important;
+    }
+  </style>
+
+  <!-- TensorFlow Libraries -->
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script>
+  <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@0.0.1-alpha.9/dist/tf-tflite.min.js"></script>
+</head>
+
+<body class="p-4 md:p-8">
+  <div class="container">
+    <h1>TFLite Model Inspector (Offline Ready)</h1>
+    <p class="text-detail">
+      Load your local <code>.tflite</code> file or a URL, define the expected input shape, and verify the
+      model's output signature.
+    </p>
+
+    <!-- Model Loading Section -->
+    <div id="loading-section" class="card">
+      <h2 class="flex-row">
+        <svg
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+          xmlns="http://www.w3.org/2000/svg"
+          aria-hidden="true"
+          focusable="false"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M4 16v1a3 3 0 003 3h10a3 3 0 003-3v-1m-4-4l-4 4m0 0l-4-4m4 4V4"
+          ></path>
+        </svg>
+        1. Load Model
+      </h2>
+      <div id="model-status" class="status status-info" role="status" aria-live="polite">
+        Awaiting model file or URL...
+      </div>
+
+      <!-- File Upload -->
+      <label for="model-file" class="label">Load from Local File (.tflite)</label>
+      <input type="file" id="model-file" class="input-file" accept=".tflite" />
+
+      <p style="text-align: center; margin: 10px 0; font-style: italic;">--- OR ---</p>
+
+      <!-- URL Input -->
+      <label for="model-url" class="label">Load from URL (Requires Network)</label>
+      <input
+        type="text"
+        id="model-url"
+        class="input-text"
+        value="./tflite/ei-w7-8-esp32-accel-words-both-better-nn-classifier-tensorflow-lite-float32-model.38.tflite"
+        placeholder="Enter the URL of your .tflite file"
+        spellcheck="false"
+        autocomplete="off"
+      />
+
+      <button onclick="loadModel()" id="load-button" class="button button-purple" type="button">
+        Load File/URL and Inspect
+      </button>
+    </div>
+
+    <!-- Model Inspection Section -->
+    <div id="inspection-section" class="card hidden" aria-live="polite">
+      <h2 class="flex-row">
+        <svg
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+          xmlns="http://www.w3.org/2000/svg"
+          aria-hidden="true"
+          focusable="false"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M9 5H7a2 2 0 00-2 2v12a2 2 0 002 2h10a2 2 0 002-2V7a2 2 0 00-2-2h-2m-9 0V3h4v2m-4 0h4"
+          ></path>
+        </svg>
+        2. Model Topology & Signature
+      </h2>
+
+      <!-- Topology/Layer Info Section -->
+      <div id="model-topology">
+        <h3
+          style="font-size: 1.125rem; font-weight: 600; color: #1f2937; margin-top: 0; margin-bottom: 8px;"
+        >
+          Model Topology
+        </h3>
+        <div id="layer-count-summary" class="status status-info">Layer Count: N/A</div>
+        <div class="result-block" style="margin-top: 8px;">
+          <strong style="color: #6d28d9;">First 3 Operations (Type: Name)</strong>
+          <ul id="layer-details-list" class="layer-list" style="margin-top: 4px;">
+            <li class="layer-item">Waiting for model load...</li>
+          </ul>
+        </div>
+        <p
+          class="text-detail"
+          style="text-align: left; margin-top: 16px; margin-bottom: 8px; font-style: normal;"
+        >
+          <strong>NOTE:</strong> This extraction relies on non-public properties of the TFLite
+          runtime. For the complete, raw model graph (all layers/operations), check the Developer
+          Console (F12) and navigate the logged object: <code>tfliteModel → executor → graph → nodes</code>.
+        </p>
+      </div>
+
+      <hr style="margin: 20px 0; border: 0; border-top: 1px solid #e5e7eb;" />
+
+      <div id="model-signature" style="margin-bottom: 16px;">
+        <h3
+          style="font-size: 1.125rem; font-weight: 600; color: #1f2937; margin-top: 0; margin-bottom: 8px;"
+        >
+          Input/Output Signature
+        </h3>
+        <p class="text-detail" style="text-align: left; margin-bottom: 16px; margin-top: 0;">
+          Enter the exact input shape your model expects for a successful dry run.
+        </p>
+
+        <!-- Input Shape Prompt -->
+        <div>
+          <label for="input-shape" class="label">
+            Expected Input Shape (e.g., <code>1, 260</code>)
+          </label>
+          <input
+            type="text"
+            id="input-shape"
+            class="input-text"
+            placeholder="Enter comma-separated dimensions, e.g., 1,260"
+            value="1, 260"
+            spellcheck="false"
+            autocomplete="off"
+          />
+        </div>
+
+        <div id="input-summary" class="status status-info result-block">Input Shape Placeholder</div>
+        <div id="output-summary" class="status status-info result-block">Output Shape Placeholder</div>
+      </div>
+
+      <button onclick="runInference()" id="run-button" class="button button-blue" type="button" disabled>
+        3. Run Test Inference
+      </button>
+    </div>
+
+    <!-- Inference Output Section -->
+    <div id="output-section" class="card hidden" aria-live="polite">
+      <h2 class="flex-row">
+        <svg
+          fill="none"
+          stroke="currentColor"
+          viewBox="0 0 24 24"
+          xmlns="http://www.w3.org/2000/svg"
+          aria-hidden="true"
+          focusable="false"
+        >
+          <path
+            stroke-linecap="round"
+            stroke-linejoin="round"
+            stroke-width="2"
+            d="M5 3v4M3 5h4M6 17v4m-2-2h4m5-16l2.286 6.857L21 12l-5.714 2.857L13 21l-2.286-6.857L5 12l5.714-2.857L13 3z"
+          ></path>
+        </svg>
+        4. Inference Results
+      </h2>
+      <div id="inference-status" class="status status-info">Run the test inference to see results.</div>
+
+      <div
+        style="margin-top: 12px; display: flex; flex-direction: column; gap: 12px;"
+        aria-live="polite"
+      >
+        <div id="output-shape-result" class="result-block">Output Shape: N/A</div>
+        <div id="output-data-preview" class="result-block">Data Preview (First 10 values): N/A</div>
+      </div>
+    </div>
+  </div>
+
+  <script>
+    // Global state variables and cached DOM references
+    let tfliteModel = null;
+    const statusEl = document.getElementById('model-status');
+    const loadBtn = document.getElementById('load-button');
+    const runBtn = document.getElementById('run-button');
+    const inspectionSection = document.getElementById('inspection-section');
+    const outputSection = document.getElementById('output-section');
+    const modelFileEl = document.getElementById('model-file');
+    const modelUrlEl = document.getElementById('model-url');
+    const inputShapeEl = document.getElementById('input-shape');
+    const inputSummaryEl = document.getElementById('input-summary');
+    const outputSummaryEl = document.getElementById('output-summary');
+    const outputShapeResultEl = document.getElementById('output-shape-result');
+    const outputDataPreviewEl = document.getElementById('output-data-preview');
+    const inferenceStatusEl = document.getElementById('inference-status');
+    const layerCountSummaryEl = document.getElementById('layer-count-summary');
+    const layerDetailsListEl = document.getElementById('layer-details-list');
+
+    /**
+     * Update the main model status message.
+     * @param {string} message
+     * @param {'info'|'loaded'|'error'} type
+     */
+    function updateStatus(message, type = 'info') {
+      statusEl.textContent = message;
+      statusEl.className = 'status ';
+      statusEl.classList.add(`status-${type}`);
+      console.log(`STATUS [${type.toUpperCase()}]: ${message}`);
+    }
+
+    /**
+     * Reset the UI to initial state.
+     */
+function resetView() {
+    tfliteModel = null;
+    inspectionSection.classList.add('hidden');
+    outputSection.classList.add('hidden');
+    inputSummaryEl.textContent = 'Input Shape Placeholder';
+    outputSummaryEl.textContent = 'Output Shape Placeholder';
+    layerCountSummaryEl.textContent = 'Layer Count: N/A';
+    layerDetailsListEl.innerHTML = '<li class="layer-item">Waiting for model load...</li>';
+    outputShapeResultEl.textContent = 'Output Shape: N/A';
+    outputDataPreviewEl.textContent = 'Data Preview (First 10 values): N/A';
+    inferenceStatusEl.textContent = 'Run the test inference to see results.';
+    runBtn.disabled = true;
+    modelFileEl.value = ''; // Clear file input
+}
+
+/**
+ * Reads a local file into an ArrayBuffer using FileReader.
+ * @param {File} file - The file object to read.
+ * @returns {Promise<ArrayBuffer>}
+ */
+function readFileAsArrayBuffer(file) {
+    return new Promise((resolve, reject) => {
+        const reader = new FileReader();
+        reader.onload = () => resolve(reader.result);
+        reader.onerror = (error) => reject(error);
+        reader.readAsArrayBuffer(file);
+    });
+}
+
+/**
+ * Attempts to extract layer/operation details from the internal GraphModel structure.
+ * WARNING: Relies on non-public properties.
+ * @param {tf.GraphModel} model - The loaded TFLite model.
+ * @returns {{count: number, layers: Array<{op: string, name: string}>}}
+ */
+function getLayerDetails(model) {
+    let layerInfo = [];
+    let layerCount = 0;
+
+    try {
+        // Accessing the internal graph structure through the executor
+        const graph = model.executor && model.executor.graph;
+        
+        if (graph && graph.nodes) {
+            // graph.nodes is an object where keys are node names (operations)
+            for (const nodeName in graph.nodes) {
+                const node = graph.nodes[nodeName];
+                // Extract operation type and node name
+                layerInfo.push({
+                    name: nodeName,
+                    op: node.op,
+                });
+                layerCount++;
+            }
+        } else {
+            layerInfo.push({ op: "ERROR", name: "Internal graph structure not found." });
+        }
+
+    } catch (e) {
+        console.error("Error attempting to parse internal model structure:", e);
+        layerInfo = [{ op: "ERROR", name: "Parsing failed: " + e.message }];
+    }
+
+    return { count: layerCount, layers: layerInfo };
+}
+
+/**
+ * Loads a TFLite model from either a file or a URL.
+ * Updates UI accordingly.
+ */
+async function loadModel() {
+    resetView();
+
+    let arrayBuffer;
+    try {
+        if (modelFileEl.files.length > 0) {
+            updateStatus("Loading model from local file...", "info");
+            arrayBuffer = await readFileAsArrayBuffer(modelFileEl.files[0]);
+        } else if (modelUrlEl.value.trim() !== "") {
+            updateStatus("Fetching model from URL...", "info");
+            const response = await fetch(modelUrlEl.value.trim());
+            if (!response.ok) throw new Error(`HTTP error! status: ${response.status}`);
+            arrayBuffer = await response.arrayBuffer();
+        } else {
+            updateStatus("Please provide a local file or URL.", "error");
+            return;
+        }
+
+        // Load TFLite model from ArrayBuffer
+        tfliteModel = await tflite.loadTFLiteModel(arrayBuffer);
+        updateStatus("Model loaded successfully!", "loaded");
+
+        // Show inspection section and update topology info
+        inspectionSection.classList.remove('hidden');
+        outputSection.classList.add('hidden');
+
+        // Extract layers
+        const { count, layers } = getLayerDetails(tfliteModel);
+        layerCountSummaryEl.textContent = `Layer Count: ${count}`;
+        layerDetailsListEl.innerHTML = layers.slice(0, 3).map(layer => 
+            `<li class="layer-item">${layer.op}: ${layer.name}</li>`).join("");
+
+        runBtn.disabled = false;
+
+        // Clear inference results on new load
+        outputShapeResultEl.textContent = 'Output Shape: N/A';
+        outputDataPreviewEl.textContent = 'Data Preview (First 10 values): N/A';
+        inferenceStatusEl.textContent = 'Run the test inference to see results.';
+
+    } catch (error) {
+        updateStatus(`Failed to load model: ${error.message}`, "error");
+        console.error(error);
+    }
+}
+
+
+
+
+
+      
+
+        /**
+         * Parses the user input shape string into an array of integers.
+         * @param {string} shapeStr - Comma-separated dimensions string.
+         * @returns {number[] | null} - Parsed shape array or null if invalid.
+         */
+        function parseInputShape(shapeStr) {
+            try {
+                const dims = shapeStr.split(',').map(s => parseInt(s.trim(), 10));
+                if (dims.some(isNaN) || dims.length === 0) {
+                    throw new Error('Invalid input shape.');
+                }
+                return dims;
+            } catch (e) {
+                return null;
+            }
+        }
+
+        /**
+         * Loads the TFLite model from either a local file or URL.
+         */
+        async function loadModel() {
+            resetView();
+            updateStatus('Loading model...', 'info');
+            let buffer;
+
+            // Priority: Local file if selected, else URL
+            const file = modelFileEl.files[0];
+            const url = modelUrlEl.value.trim();
+
+            try {
+                if (file) {
+                    buffer = await readFileAsArrayBuffer(file);
+                } else if (url) {
+                    const response = await fetch(url);
+                    if (!response.ok) throw new Error(`HTTP error! Status: ${response.status}`);
+                    buffer = await response.arrayBuffer();
+                } else {
+                    updateStatus('Please select a local file or enter a valid URL.', 'error');
+                    return;
+                }
+
+                // Load the model from buffer using tf-tflite
+                tfliteModel = await tflite.loadTFLiteModel(buffer);
+                updateStatus('Model loaded successfully.', 'loaded');
+
+                // Display model topology details
+                inspectionSection.classList.remove('hidden');
+                outputSection.classList.add('hidden');
+
+                const { count, layers } = getLayerDetails(tfliteModel);
+                layerCountSummaryEl.textContent = `Layer Count: ${count}`;
+                if (layers.length > 0) {
+                    layerDetailsListEl.innerHTML = '';
+                    layers.slice(0, 3).forEach(layer => {
+                        const li = document.createElement('li');
+                        li.className = 'layer-item';
+                        li.textContent = `${layer.op}: ${layer.name}`;
+                        layerDetailsListEl.appendChild(li);
+                    });
+                } else {
+                    layerDetailsListEl.innerHTML = '<li class="layer-item">No layers found.</li>';
+                }
+
+                // Enable inference button
+                runBtn.disabled = false;
+
+                // Update input shape display based on current input field value
+                updateInputOutputSummary();
+
+            } catch (error) {
+                console.error(error);
+                updateStatus(`Failed to load model: ${error.message}`, 'error');
+                inspectionSection.classList.add('hidden');
+                runBtn.disabled = true;
+            }
+        }
+
+        /**
+         * Updates the input and output shape summaries on the UI.
+         */
+        function updateInputOutputSummary() {
+            const inputShapeStr = inputShapeEl.value;
+            const parsedShape = parseInputShape(inputShapeStr);
+
+            if (!parsedShape) {
+                inputSummaryEl.textContent = 'Invalid input shape format.';
+                outputSummaryEl.textContent = 'Output shape unavailable.';
+                runBtn.disabled = true;
+                return;
+            }
+
+            inputSummaryEl.textContent = `Input Shape: [${parsedShape.join(', ')}]`;
+
+            if (tfliteModel) {
+                try {
+                    // Create a dummy input tensor with zeros using the parsed input shape
+                    const inputTensor = tf.zeros(parsedShape);
+
+                    // Prepare input as array (expected by the TFLite model)
+                    const inputArray = [inputTensor];
+
+                    // Run inference to get output tensor
+                    const outputTensor = tfliteModel.predict(inputArray);
+
+                    // Output shape
+                    const outputShape = outputTensor.shape || [];
+
+                    outputSummaryEl.textContent = `Output Shape: [${outputShape.join(', ')}]`;
+
+                    inputTensor.dispose();
+                    outputTensor.dispose();
+
+                    runBtn.disabled = false;
+
+                } catch (e) {
+                    console.warn('Error during dry run inference:', e);
+                    outputSummaryEl.textContent = 'Failed to infer output shape.';
+                    runBtn.disabled = true;
+                }
+            } else {
+                outputSummaryEl.textContent = 'Load a model first.';
+                runBtn.disabled = true;
+            }
+        }
+
+        // Attach event listener for input shape changes
+        inputShapeEl.addEventListener('input', updateInputOutputSummary);
+
+        /**
+         * Runs a test inference with dummy input data and displays output.
+         */
+        async function runInference() {
+            if (!tfliteModel) {
+                updateStatus('Load a model before running inference.', 'error');
+                return;
+            }
+
+            const inputShapeStr = inputShapeEl.value;
+            const parsedShape = parseInputShape(inputShapeStr);
+
+            if (!parsedShape) {
+                updateStatus('Invalid input shape.', 'error');
+                return;
+            }
+
+            try {
+                inferenceStatusEl.textContent = 'Running inference...';
+
+                // Create dummy input tensor with zeros
+                const inputTensor = tf.zeros(parsedShape);
+
+                // Prepare input as array (expected by the TFLite model)
+                const inputArray = [inputTensor];
+
+                // Run inference
+                const outputTensor = await tfliteModel.predict(inputArray);
+
+                // Show output shape
+                outputShapeResultEl.textContent = `Output Shape: [${outputTensor.shape.join(', ')}]`;
+
+                // Show first 10 values of output
+                const outputData = await outputTensor.data();
+                const preview = Array.from(outputData).slice(0, 10).map(v => v.toFixed(4)).join(', ');
+                outputDataPreviewEl.textContent = `Data Preview (First 10 values): ${preview}`;
+
+                inferenceStatusEl.textContent = 'Inference completed successfully.';
+                
+                inputTensor.dispose();
+                outputTensor.dispose();
+
+            } catch (error) {
+                console.error(error);
+                inferenceStatusEl.textContent = `Inference failed: ${error.message}`;
+            }
+        }
+
+        // Initialize/reset view on page load
+        resetView();
+
+    </script>
+
+</body>
+</html>
+
+    
