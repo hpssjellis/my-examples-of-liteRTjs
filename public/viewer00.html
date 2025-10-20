@@ -1,4 +1,3 @@
-
 <!DOCTYPE html>
 <html lang="en">
 <head>
@@ -195,6 +194,40 @@
             
             <div id="output-shape-result" class="code-block">Output Shape: N/A</div>
             <div id="output-data-preview" class="code-block">Data Preview: N/A</div>
+            
+            <hr>
+            
+            <h3>Performance Profiling</h3>
+            <div id="profiling-summary" class="code-block">Run inference to see profiling data</div>
+            
+            <h3>Detailed Operation Timing (Top 10 Slowest)</h3>
+            <div id="profiling-details" class="code-block">Run inference to see detailed timing</div>
+        </div>
+
+        <!-- Section 4: Complete Model Data -->
+        <div id="model-data-section" class="card hidden">
+            <h2>4. Complete Model Data (No Weights)</h2>
+            <p style="font-size: 14px; color: #6b7280; margin-bottom: 16px;">
+                All extractable model metadata and structure information
+            </p>
+            
+            <h3>Model Metadata</h3>
+            <div id="model-metadata" class="code-block">N/A</div>
+            
+            <h3>Quantization Info</h3>
+            <div id="quantization-info" class="code-block">N/A</div>
+            
+            <h3>All Tensors (Intermediate)</h3>
+            <div id="tensor-info" class="code-block">N/A</div>
+            
+            <h3>Operator Statistics</h3>
+            <div id="operator-stats" class="code-block">N/A</div>
+            
+            <h3>Memory Analysis</h3>
+            <div id="memory-analysis" class="code-block">N/A</div>
+            
+            <h3>Raw Model Structure (JSON)</h3>
+            <div id="raw-structure" class="code-block" style="max-height: 400px; overflow-y: auto;">N/A</div>
         </div>
     </div>
 
@@ -215,6 +248,15 @@
         const inferenceStatusEl = document.getElementById('inference-status');
         const layerCountSummaryEl = document.getElementById('layer-count-summary');
         const layerDetailsListEl = document.getElementById('layer-details-list');
+        const modelDataSection = document.getElementById('model-data-section');
+        const modelMetadataEl = document.getElementById('model-metadata');
+        const quantizationInfoEl = document.getElementById('quantization-info');
+        const tensorInfoEl = document.getElementById('tensor-info');
+        const operatorStatsEl = document.getElementById('operator-stats');
+        const memoryAnalysisEl = document.getElementById('memory-analysis');
+        const rawStructureEl = document.getElementById('raw-structure');
+        const profilingSummaryEl = document.getElementById('profiling-summary');
+        const profilingDetailsEl = document.getElementById('profiling-details');
 
         function updateStatus(message, type = 'info') {
             statusEl.textContent = message;
@@ -226,6 +268,7 @@
             tfliteModel = null;
             inspectionSection.classList.add('hidden');
             outputSection.classList.add('hidden');
+            modelDataSection.classList.add('hidden');
             inputSummaryEl.textContent = 'Input: N/A';
             outputSummaryEl.textContent = 'Output: N/A';
             layerCountSummaryEl.textContent = 'Operations: N/A';
@@ -235,6 +278,14 @@
             inferenceStatusEl.textContent = 'Run inference to see results';
             inputShapeEl.value = '';
             runBtn.disabled = true;
+            modelMetadataEl.textContent = 'N/A';
+            quantizationInfoEl.textContent = 'N/A';
+            tensorInfoEl.textContent = 'N/A';
+            operatorStatsEl.textContent = 'N/A';
+            memoryAnalysisEl.textContent = 'N/A';
+            rawStructureEl.textContent = 'N/A';
+            profilingSummaryEl.textContent = 'Run inference to see profiling data';
+            profilingDetailsEl.textContent = 'Run inference to see detailed timing';
         }
 
         function readFileAsArrayBuffer(file) {
@@ -271,7 +322,207 @@
             return { count: layerCount, layers: layerInfo };
         }
 
+        function extractCompleteModelData(model) {
+            const data = {
+                metadata: {},
+                quantization: {},
+                tensors: [],
+                operators: {},
+                memory: {},
+                rawStructure: {}
+            };
+
+            try {
+                // Basic model info
+                data.metadata.modelFormat = 'TensorFlow Lite';
+                data.metadata.inputCount = model.inputs ? model.inputs.length : 0;
+                data.metadata.outputCount = model.outputs ? model.outputs.length : 0;
+
+                // Inputs detail
+                if (model.inputs) {
+                    data.metadata.inputs = model.inputs.map(inp => ({
+                        name: inp.name,
+                        shape: inp.shape,
+                        dtype: inp.dtype
+                    }));
+                }
+
+                // Outputs detail
+                if (model.outputs) {
+                    data.metadata.outputs = model.outputs.map(out => ({
+                        name: out.name,
+                        shape: out.shape,
+                        dtype: out.dtype
+                    }));
+                }
+
+                // Try to access internal structure
+                const executor = model.executor;
+                if (executor) {
+                    const tfliteBackend = executor.tflite;
+                    const graph = tfliteBackend?.graph;
+
+                    if (graph) {
+                        // Extract all tensors
+                        if (graph.tensors) {
+                            for (const tensorName in graph.tensors) {
+                                const tensor = graph.tensors[tensorName];
+                                data.tensors.push({
+                                    name: tensorName,
+                                    shape: tensor.shape || 'unknown',
+                                    dtype: tensor.dtype || 'unknown',
+                                    // Don't include actual data, just metadata
+                                    size: tensor.shape ? tensor.shape.reduce((a, b) => a * b, 1) : 0
+                                });
+                            }
+                        }
+
+                        // Extract operators and count them
+                        if (graph.nodes) {
+                            const opCounts = {};
+                            for (const nodeName in graph.nodes) {
+                                const node = graph.nodes[nodeName];
+                                const opType = node.op || 'Unknown';
+                                opCounts[opType] = (opCounts[opType] || 0) + 1;
+                                
+                                // Store operator details (without weights)
+                                if (!data.operators[opType]) {
+                                    data.operators[opType] = {
+                                        count: 0,
+                                        examples: []
+                                    };
+                                }
+                                data.operators[opType].count++;
+                                if (data.operators[opType].examples.length < 3) {
+                                    data.operators[opType].examples.push({
+                                        name: nodeName,
+                                        inputs: node.inputs || [],
+                                        outputs: node.outputs || []
+                                    });
+                                }
+                            }
+                        }
+
+                        // Quantization info from inputs/outputs
+                        data.quantization.inputQuantization = model.inputs?.map(inp => ({
+                            name: inp.name,
+                            dtype: inp.dtype,
+                            quantized: inp.dtype.includes('int') || inp.dtype.includes('uint')
+                        })) || [];
+
+                        data.quantization.outputQuantization = model.outputs?.map(out => ({
+                            name: out.name,
+                            dtype: out.dtype,
+                            quantized: out.dtype.includes('int') || out.dtype.includes('uint')
+                        })) || [];
+
+                        // Memory analysis
+                        let totalElements = 0;
+                        let totalBytes = 0;
+                        const dtypeBreakdown = {};
+                        
+                        data.tensors.forEach(tensor => {
+                            const elements = tensor.size;
+                            totalElements += elements;
+                            
+                            // Count by dtype
+                            dtypeBreakdown[tensor.dtype] = (dtypeBreakdown[tensor.dtype] || 0) + 1;
+                            
+                            // Estimate bytes (4 for float32, 1 for int8, etc)
+                            let bytesPerElement = 4;
+                            if (tensor.dtype.includes('int8') || tensor.dtype.includes('uint8')) bytesPerElement = 1;
+                            else if (tensor.dtype.includes('int16') || tensor.dtype.includes('float16')) bytesPerElement = 2;
+                            else if (tensor.dtype.includes('int64')) bytesPerElement = 8;
+                            totalBytes += elements * bytesPerElement;
+                        });
+
+                        data.memory = {
+                            totalTensorElements: totalElements,
+                            estimatedMemoryBytes: totalBytes,
+                            estimatedMemoryKB: (totalBytes / 1024).toFixed(2),
+                            estimatedMemoryMB: (totalBytes / (1024 * 1024)).toFixed(4),
+                            tensorCount: data.tensors.length,
+                            dtypeBreakdown: dtypeBreakdown,
+                            largestTensors: data.tensors
+                                .sort((a, b) => b.size - a.size)
+                                .slice(0, 5)
+                                .map(t => ({
+                                    name: t.name,
+                                    shape: t.shape,
+                                    elements: t.size,
+                                    dtype: t.dtype
+                                }))
+                        };
+
+                        // Raw structure (sanitized - no weight data)
+                        const nodesList = graph.nodes ? Object.keys(graph.nodes) : [];
+                        const tensorsList = graph.tensors ? Object.keys(graph.tensors) : [];
+                        
+                        data.rawStructure = {
+                            graphNodes: nodesList.length,
+                            graphTensors: tensorsList.length,
+                            sampleNodes: nodesList.slice(0, 5),
+                            sampleTensors: tensorsList.slice(0, 5),
+                            executor: {
+                                type: executor.constructor?.name || 'unknown',
+                                hasGraph: !!graph,
+                                hasTfliteBackend: !!tfliteBackend
+                            },
+                            modelSignature: {
+                                inputs: model.inputs?.length || 0,
+                                outputs: model.outputs?.length || 0
+                            }
+                        };
+                    }
+                }
+
+            } catch (e) {
+                console.error("Error extracting complete model data:", e);
+                data.error = e.message;
+            }
+
+            return data;
+        }
+
+        function displayCompleteModelData(data) {
+            // Model Metadata
+            modelMetadataEl.textContent = JSON.stringify(data.metadata, null, 2);
+
+            // Quantization Info
+            const quantInfo = {
+                inputQuantization: data.quantization.inputQuantization,
+                outputQuantization: data.quantization.outputQuantization,
+                summary: {
+                    hasQuantizedInputs: data.quantization.inputQuantization?.some(q => q.quantized) || false,
+                    hasQuantizedOutputs: data.quantization.outputQuantization?.some(q => q.quantized) || false
+                }
+            };
+            quantizationInfoEl.textContent = JSON.stringify(quantInfo, null, 2);
+
+            // Tensor Info (first 20 tensors)
+            const tensorSummary = {
+                totalTensors: data.tensors.length,
+                sample: data.tensors.slice(0, 20),
+                note: data.tensors.length > 20 ? `Showing first 20 of ${data.tensors.length} tensors` : 'All tensors shown'
+            };
+            tensorInfoEl.textContent = JSON.stringify(tensorSummary, null, 2);
+
+            // Operator Statistics
+            const opStats = {
+                totalOperatorTypes: Object.keys(data.operators).length,
+                operators: data.operators
+            };
+            operatorStatsEl.textContent = JSON.stringify(opStats, null, 2);
+
+            // Memory Analysis
+            memoryAnalysisEl.textContent = JSON.stringify(data.memory, null, 2);
+
+            // Raw Structure
+            rawStructureEl.textContent = JSON.stringify(data.rawStructure, null, 2);
+        }
+
         async function loadModel() {
+            cleanupOldModel(); // Clean up previous model if exists
             resetView();
             loadBtn.disabled = true;
 
@@ -304,7 +555,11 @@
                     tflite.setWasmPath('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@0.0.1-alpha.9/dist/');
                 }
 
-                tfliteModel = await tflite.loadTFLiteModel(modelSource);
+                // Load model with profiling enabled
+                tfliteModel = await tflite.loadTFLiteModel(modelSource, {
+                    enableProfiling: true,
+                    numThreads: navigator.hardwareConcurrency || 4
+                });
                 updateStatus('Model loaded successfully', 'loaded');
                 loadBtn.disabled = false;
                 
@@ -316,10 +571,28 @@
                 runBtn.disabled = false;
                 inspectModel();
 
+                // Extract and display complete model data
+                modelDataSection.classList.remove('hidden');
+                const completeData = extractCompleteModelData(tfliteModel);
+                displayCompleteModelData(completeData);
+                console.log("Complete Model Data:", completeData);
+
             } catch (error) {
                 updateStatus(`Load error: ${error.message}`, 'error');
                 console.error("TFLite error:", error);
                 loadBtn.disabled = false;
+            }
+        }
+
+        // Add cleanup function for when loading a new model
+        function cleanupOldModel() {
+            if (tfliteModel && typeof tfliteModel.cleanUp === 'function') {
+                try {
+                    tfliteModel.cleanUp();
+                    console.log("Previous model cleaned up");
+                } catch (e) {
+                    console.warn("Cleanup error:", e);
+                }
             }
         }
 
@@ -422,6 +695,55 @@
 
                     inferenceStatusEl.textContent = 'Inference complete';
                     inferenceStatusEl.className = 'status status-loaded';
+
+                    // Get profiling data
+                    try {
+                        // Get profiling summary - returns a string
+                        if (typeof tfliteModel.getProfilingSummary === 'function') {
+                            const summary = tfliteModel.getProfilingSummary();
+                            console.log("Profiling Summary (string):", summary);
+                            profilingSummaryEl.textContent = summary || 'No profiling summary available';
+                        } else {
+                            profilingSummaryEl.textContent = 'Profiling summary not available (function not found)';
+                        }
+
+                        // Get detailed profiling results - returns array of {nodeType, nodeName, execTimeInMs}
+                        if (typeof tfliteModel.getProfilingResults === 'function') {
+                            const results = tfliteModel.getProfilingResults();
+                            console.log("Profiling Results (array):", results);
+                            
+                            if (results && results.length > 0) {
+                                // Sort by execution time (descending) and take top 15
+                                const sortedResults = [...results]
+                                    .sort((a, b) => (b.execTimeInMs || 0) - (a.execTimeInMs || 0))
+                                    .slice(0, 15);
+                                
+                                // Calculate total time for percentages
+                                const totalTime = results.reduce((sum, op) => sum + (op.execTimeInMs || 0), 0);
+                                
+                                const detailsFormatted = {
+                                    totalOperations: results.length,
+                                    totalExecutionTime: `${totalTime.toFixed(6)} ms`,
+                                    top15Slowest: sortedResults.map(op => ({
+                                        name: op.nodeName || 'Unknown',
+                                        type: op.nodeType || 'Unknown',
+                                        time: `${(op.execTimeInMs || 0).toFixed(6)} ms`,
+                                        percentage: totalTime > 0 ? `${((op.execTimeInMs || 0) / totalTime * 100).toFixed(2)}%` : 'N/A'
+                                    })),
+                                    note: 'Top 15 slowest operations. See console for full list.'
+                                };
+                                profilingDetailsEl.textContent = JSON.stringify(detailsFormatted, null, 2);
+                            } else {
+                                profilingDetailsEl.textContent = 'No profiling results returned. Make sure enableProfiling: true was set when loading model.';
+                            }
+                        } else {
+                            profilingDetailsEl.textContent = 'Detailed profiling not available (function not found)';
+                        }
+                    } catch (profilingError) {
+                        console.warn("Profiling error:", profilingError);
+                        profilingSummaryEl.textContent = `Profiling unavailable: ${profilingError.message}`;
+                        profilingDetailsEl.textContent = `Profiling unavailable: ${profilingError.message}`;
+                    }
                 });
             } catch (error) {
                 inferenceStatusEl.textContent = `Error: ${error.message}`;
