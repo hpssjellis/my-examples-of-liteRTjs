@@ -103,13 +103,13 @@
             myDefaultUrl: './tflite/ei-ei-v202-xiao-sounds-0unknown-1no-2yes-esp32-nn-classifier-tensorflow-lite-float32-model.12.tflite', 
             
             // Expected sample rate of the TFLite model (standard for EI audio)
-            mySampleRate: 16000, 
+            mySampleRate: 260, 
             
             // The length of the audio window (1 second = 16000 samples)
-            myWindowSizeSamples: 16000, 
+            myWindowSizeSamples: 1, 
             
             // Labels matching the model's output index order
-            myLabels: ['_background_noise_', 'wake_word', 'unknown'], 
+            myLabels: ['_background_noise_', 'No', 'Yes'], 
         };
 
         // =================================================================
