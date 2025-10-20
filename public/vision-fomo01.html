@@ -8,50 +8,54 @@
     <!-- Minimal, Simple CSS -->
     <style>
         body { 
-            font-family: Arial, sans-serif; 
+            font-family: 'Inter', sans-serif; /* Using Inter font for modern look */
             display: flex; 
             flex-direction: column; 
             align-items: center; 
             margin: 20px; 
-            background-color: #f0f0f0; 
+            background-color: #f0f4f8; /* Soft background */
         }
         #myContainer { 
-            max-width: 480px; 
+            max-width: 550px; /* Slightly wider container */
             width: 100%; 
             background: white; 
             padding: 20px; 
-            border-radius: 8px; 
-            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1); 
+            border-radius: 12px; 
+            box-shadow: 0 6px 15px rgba(0, 0, 0, 0.15); 
             margin-bottom: 20px;
         }
         #myCanvas { 
-            border: 2px solid #007bff; 
-            border-radius: 4px; 
+            border: 3px solid #1a73e8; /* Blue border */
+            border-radius: 8px; 
             margin-top: 20px; 
             background-color: #333; 
             width: 100%; 
             height: auto;
             max-width: 400px; 
+            aspect-ratio: 1 / 1; /* Ensure it's square */
             display: block;
         }
         #myVideo { 
             display: none; 
         } 
         .myButton { 
-            background-color: #007bff; 
+            background-color: #1a73e8; 
             color: white; 
             padding: 10px 15px; 
             border: none; 
-            border-radius: 4px; 
+            border-radius: 6px; 
             cursor: pointer; 
             font-size: 16px; 
             margin-top: 10px; 
             width: 100%; 
             box-sizing: border-box;
-            transition: background-color 0.3s;
+            transition: background-color 0.3s, transform 0.1s;
         }
         .myButton:hover { 
-            background-color: #0056b3; 
+            background-color: #155cb8; 
+        }
+        .myButton:active {
+            transform: translateY(1px);
         }
         .myButton:disabled { 
             background-color: #ccc; 
@@ -60,31 +64,49 @@
         .myStatus { 
             margin-top: 10px; 
             font-weight: bold; 
-            color: #333; 
+            color: #3c4043; 
             text-align: center; 
-            padding: 10px; 
-            border-radius: 4px; 
-            background-color: #e0f7fa;
-            border: 1px solid #b2ebf2;
+            padding: 12px; 
+            border-radius: 6px; 
+            background-color: #e6f7ff;
+            border: 1px solid #90caff;
         }
         .myLabel { 
             display: block; 
-            margin-top: 15px; 
-            margin-bottom: 5px; 
-            font-weight: bold; 
+            margin-top: 10px; 
+            margin-bottom: 4px; 
+            font-weight: 600; 
+            font-size: 0.95em;
+            color: #3c4043;
         }
-        .myInput { 
+        .myInput, .mySelect, .myTextarea { 
             width: 100%; 
-            padding: 8px; 
-            border: 1px solid #ccc; 
-            border-radius: 4px; 
+            padding: 10px; 
+            border: 1px solid #dadce0; 
+            border-radius: 6px; 
             box-sizing: border-box; 
+            font-size: 14px;
+            margin-bottom: 5px;
         }
         .myGroup { 
-            border: 1px dashed #bbb; 
+            border: 1px dashed #c0c0c0; 
             padding: 15px; 
-            border-radius: 4px; 
-            margin-top: 15px; 
+            border-radius: 8px; 
+            margin-top: 20px; 
+            background-color: #fafafa;
+        }
+        .myGrid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 15px;
+        }
+        .myGrid > div {
+            min-width: 0; /* Fixes flex/grid overflow */
+        }
+        @media (max-width: 500px) {
+            .myGrid {
+                grid-template-columns: 1fr;
+            }
         }
     </style>
     
@@ -96,18 +118,16 @@
 
     <script>
         // =================================================================
-        // 🚀 USER-CONFIGURABLE MODEL SETTINGS
+        // 🚀 USER-CONFIGURABLE MODEL SETTINGS (Defaults)
+        // Defaults updated to: Resolution 240, 3 Channels (RGB), Labels: background, Eyes
         // =================================================================
-        const myModelConfig = {
-            // URL for remote loading (You can update this to your preferred default)
-            myDefaultUrl: 'https://hpssjellis.github.io/my-examples-of-edge-impulse/public/tflite/ei-ei-v1-5-0-minst-96x96-f180-object-detection-tensorflow-lite-float32-model.5.tflite', 
-            
-            // NOTE: These parameters MUST match the model you load.
+        let myModelConfig = {
+            myDefaultUrl: 'https://hpssjellis.github.io/my-examples-of-edge-impulse/public/tflite/fomo01.tflite', 
             myInputResolution: 240, 
-            myGridScaleFactor: 8, // 240 / 8 = 30 (Grid size)
+            myGridScaleFactor: 8,
             myConfidenceThreshold: 0.5, 
-            myClassLabels: ['background', 'myObjectOne', 'myObjectTwo', 'another_thing'], // Must match the model's classes
-            myInputChannels: 3, 
+            myClassLabels: ['background', 'Eyes'], // <-- UPDATED DEFAULT LABELS
+            myInputChannels: 3, // <-- DEFAULT RGB (3 Channels)
         };
 
         // =================================================================
@@ -121,16 +141,123 @@
         let myStatusElement = null;
         let myAnimationFrameId = null;
         
+        // Input references
         let myFileInput = null;
         let myUrlInput = null;
+        let myResolutionInput = null;
+        let myChannelsInput = null;
+        let myLabelsInput = null;
+        let myConfidenceInput = null;
+        let myGridFactorInput = null;
 
-        const myInputSize = myModelConfig.myInputResolution;
-        const myGridSize = myInputSize / myModelConfig.myGridScaleFactor;
+        // Derived variables (calculated from myModelConfig)
+        let myInputSize = myModelConfig.myInputResolution;
+        let myGridSize = myInputSize / myModelConfig.myGridScaleFactor;
 
         // =================================================================
         // 🏠 HTML SETUP (Simple DOM Creation)
         // =================================================================
         
+        /**
+         * @function myCreateConfigGroup
+         * Creates the dedicated configuration inputs group.
+         * NOTE: Value assignment is now done in mySetInitialConfigValues().
+         */
+        function myCreateConfigGroup(myControlsDiv) {
+            const myConfigGroup = document.createElement('div');
+            myConfigGroup.className = 'myGroup';
+            myConfigGroup.style.borderColor = '#1a73e8';
+            myConfigGroup.style.backgroundColor = '#f4faff';
+
+            const myConfigTitle = document.createElement('h2');
+            myConfigTitle.style.fontSize = '1.2em';
+            myConfigTitle.style.fontWeight = 'bold';
+            myConfigTitle.style.marginBottom = '15px';
+            myConfigTitle.style.color = '#1a73e8';
+            myConfigTitle.textContent = 'Model Configuration (MUST match your model)';
+            myConfigGroup.appendChild(myConfigTitle);
+
+            const myGridContainer = document.createElement('div');
+            myGridContainer.className = 'myGrid';
+
+            // 1. Input Resolution
+            let myDiv = document.createElement('div');
+            myDiv.innerHTML = '<label for="myResolutionInput" class="myLabel">Resolution (Min 32):</label>';
+            myResolutionInput = document.createElement('input');
+            myResolutionInput.type = 'number';
+            myResolutionInput.id = 'myResolutionInput';
+            myResolutionInput.className = 'myInput';
+            myResolutionInput.min = '32';
+            myResolutionInput.step = '1'; 
+            myDiv.appendChild(myResolutionInput);
+            myGridContainer.appendChild(myDiv);
+
+            // 2. Color Format (Channels)
+            myDiv = document.createElement('div');
+            myDiv.innerHTML = '<label for="myChannelsInput" class="myLabel">Color Format (Channels):</label>';
+            myChannelsInput = document.createElement('select');
+            myChannelsInput.id = 'myChannelsInput';
+            myChannelsInput.className = 'mySelect';
+            // Value is set here using the 'selected' attribute for the select element
+            myChannelsInput.innerHTML = `
+                <option value="3" ${myModelConfig.myInputChannels === 3 ? 'selected' : ''}>RGB (3 Channels)</option>
+                <option value="1" ${myModelConfig.myInputChannels === 1 ? 'selected' : ''}>Grayscale (1 Channel)</option>
+            `;
+            myDiv.appendChild(myChannelsInput);
+            myGridContainer.appendChild(myDiv);
+
+            // 3. Confidence Threshold
+            myDiv = document.createElement('div');
+            myDiv.innerHTML = '<label for="myConfidenceInput" class="myLabel">Confidence Threshold (0.0 - 1.0):</label>';
+            myConfidenceInput = document.createElement('input');
+            myConfidenceInput.type = 'number';
+            myConfidenceInput.id = 'myConfidenceInput';
+            myConfidenceInput.className = 'myInput';
+            myConfidenceInput.min = '0.0';
+            myConfidenceInput.max = '1.0';
+            myConfidenceInput.step = '0.05';
+            myDiv.appendChild(myConfidenceInput);
+            myGridContainer.appendChild(myDiv);
+
+            // 4. Grid Scale Factor (Stride)
+            myDiv = document.createElement('div');
+            myDiv.innerHTML = '<label for="myGridFactorInput" class="myLabel">Grid Scale Factor (Stride):</label>';
+            myGridFactorInput = document.createElement('input');
+            myGridFactorInput.type = 'number';
+            myGridFactorInput.id = 'myGridFactorInput';
+            myGridFactorInput.className = 'myInput';
+            myGridFactorInput.min = '4';
+            myGridFactorInput.step = '4';
+            myDiv.appendChild(myGridFactorInput);
+            myGridContainer.appendChild(myDiv);
+
+            myConfigGroup.appendChild(myGridContainer);
+
+            // 5. Class Labels
+            const myLabelLabels = document.createElement('label');
+            myLabelLabels.htmlFor = 'myLabelsInput';
+            myLabelLabels.className = 'myLabel';
+            myLabelLabels.style.marginTop = '15px';
+            myLabelLabels.textContent = 'Class Labels (Comma-separated, first MUST be "background"):';
+            myConfigGroup.appendChild(myLabelLabels);
+
+            myLabelsInput = document.createElement('textarea');
+            myLabelsInput.id = 'myLabelsInput';
+            myLabelsInput.rows = '2';
+            myLabelsInput.className = 'myTextarea';
+            myConfigGroup.appendChild(myLabelsInput);
+            
+            // Apply Button
+            const myApplyButton = document.createElement('button');
+            myApplyButton.className = 'myButton';
+            myApplyButton.style.backgroundColor = '#0f9d58'; /* Green for Apply */
+            myApplyButton.textContent = 'Apply Config & Prepare to Load Model';
+            myApplyButton.onclick = myApplyConfigAndRestart;
+            myConfigGroup.appendChild(myApplyButton);
+
+            myControlsDiv.appendChild(myConfigGroup);
+        }
+
         /**
          * @function myCreateDOM
          * Initializes all necessary DOM elements.
@@ -140,31 +267,40 @@
             myContainer.id = 'myContainer';
             
             const myTitle = document.createElement('h1');
-            myTitle.style.fontSize = '1.5em';
+            myTitle.style.fontSize = '1.8em';
             myTitle.style.fontWeight = 'bold';
             myTitle.style.marginBottom = '15px';
             myTitle.style.textAlign = 'center';
+            myTitle.style.color = '#3c4043';
             myTitle.textContent = 'External FOMO Detector';
             myContainer.appendChild(myTitle);
 
             myStatusElement = document.createElement('p');
             myStatusElement.id = 'myStatusMessage';
             myStatusElement.className = 'myStatus';
-            myStatusElement.textContent = 'Select a model loading method to start.';
+            myStatusElement.textContent = '1. Configure Model, 2. Load Model, 3. Start Webcam.';
             myContainer.appendChild(myStatusElement);
             
             const myControlsDiv = document.createElement('div');
             myControlsDiv.id = 'myControls';
 
+            // Insert Configuration Group first
+            myCreateConfigGroup(myControlsDiv);
+            
+            // Explicitly set values after element creation (Fixes display issue)
+            mySetInitialConfigValues();
+
             // 1. Load from File
             const myFileGroup = document.createElement('div');
             myFileGroup.className = 'myGroup';
-            myFileGroup.style.borderColor = '#007bff';
-            myFileGroup.style.backgroundColor = '#f7faff';
+            myFileGroup.style.borderColor = '#ff6d00';
+            myFileGroup.style.backgroundColor = '#fff8e1';
+            myFileGroup.style.marginTop = '25px';
 
             const myFileLabel = document.createElement('p');
             myFileLabel.style.fontWeight = 'bold';
-            myFileLabel.textContent = '1. Load From Computer File (.tflite):';
+            myFileLabel.style.color = '#ff6d00';
+            myFileLabel.textContent = 'Load from Computer File (.tflite):';
             myFileGroup.appendChild(myFileLabel);
             
             myFileInput = document.createElement('input'); 
@@ -179,17 +315,22 @@
             // 2. Load from Default URL
             const myDefaultUrlButton = document.createElement('button');
             myDefaultUrlButton.className = 'myButton';
-            myDefaultUrlButton.textContent = `2. Load Default URL (${myModelConfig.myDefaultUrl.split('/').pop()})`;
+            myDefaultUrlButton.style.backgroundColor = '#fbbc04'; /* Yellow/Orange */
+            myDefaultUrlButton.style.color = '#3c4043';
+            myDefaultUrlButton.textContent = `Load Default URL (${myModelConfig.myDefaultUrl.split('/').pop()}) and Start Webcam`;
             myDefaultUrlButton.onclick = myLoadFromDefaultUrl;
             myControlsDiv.appendChild(myDefaultUrlButton);
 
             // 3. Load from Custom URL
             const myUrlGroup = document.createElement('div');
             myUrlGroup.className = 'myGroup';
+            myUrlGroup.style.borderColor = '#1a73e8';
+            myUrlGroup.style.backgroundColor = '#f7faff';
 
             const myUrlLabel = document.createElement('p');
             myUrlLabel.style.fontWeight = 'bold';
-            myUrlLabel.textContent = '3. Load From Custom URL:';
+            myUrlLabel.style.color = '#1a73e8';
+            myUrlLabel.textContent = 'Load From Custom URL:';
             myUrlGroup.appendChild(myUrlLabel);
 
             myUrlInput = document.createElement('input');
@@ -215,11 +356,11 @@
             myResetButton.textContent = 'Reset / Stop Webcam';
             myResetButton.onclick = myResetApplication;
             myResetButton.style.marginTop = '25px'; 
+            myResetButton.style.backgroundColor = '#d93025'; /* Red for Reset */
             myControlsDiv.appendChild(myResetButton);
             
             myContainer.appendChild(myControlsDiv);
             document.body.appendChild(myContainer);
-
 
             // Video and Canvas
             myVideoElement = document.createElement('video');
@@ -230,14 +371,102 @@
 
             myCanvasElement = document.createElement('canvas');
             myCanvasElement.id = 'myCanvas';
-            myCanvasElement.width = myInputSize;
-            myCanvasElement.height = myInputSize; 
+            // Set canvas size based on initial config
+            myCanvasElement.width = myModelConfig.myInputResolution;
+            myCanvasElement.height = myModelConfig.myInputResolution; 
             document.body.appendChild(myCanvasElement);
 
             myContext = myCanvasElement.getContext('2d');
+            myUpdateDerivedConfig(); // Initial calculation
         }
         
         window.onload = myCreateDOM; 
+
+        // =================================================================
+        // ⚙️ CONFIGURATION MANAGEMENT
+        // =================================================================
+
+        /**
+         * @function mySetInitialConfigValues
+         * Explicitly sets the values of input fields after DOM creation.
+         */
+        function mySetInitialConfigValues() {
+            if (myResolutionInput) {
+                myResolutionInput.value = myModelConfig.myInputResolution;
+                myConfidenceInput.value = myModelConfig.myConfidenceThreshold;
+                myGridFactorInput.value = myModelConfig.myGridScaleFactor;
+                myLabelsInput.value = myModelConfig.myClassLabels.join(', ');
+            }
+        }
+        
+        /**
+         * @function myUpdateDerivedConfig
+         * Updates global derived config variables based on current myModelConfig.
+         */
+        function myUpdateDerivedConfig() {
+            myInputSize = myModelConfig.myInputResolution;
+            myGridSize = myInputSize / myModelConfig.myGridScaleFactor;
+            
+            // Update canvas dimensions to match the new resolution
+            if (myCanvasElement) {
+                myCanvasElement.width = myInputSize;
+                myCanvasElement.height = myInputSize;
+            }
+            console.log(`[Config Updated] Resolution: ${myInputSize}x${myInputSize}, Grid Size: ${myGridSize}x${myGridSize}, Channels: ${myModelConfig.myInputChannels}, Classes: ${myModelConfig.myClassLabels.length}`);
+        }
+
+        /**
+         * @function myApplyConfigAndRestart
+         * Reads input fields, validates, updates myModelConfig, and resets the app.
+         */
+        function myApplyConfigAndRestart() {
+            try {
+                // 1. Resolution
+                const myNewResolution = parseInt(myResolutionInput.value);
+                // Validation relaxed: removed the check for divisibility by 32
+                if (isNaN(myNewResolution) || myNewResolution < 32) {
+                    throw new Error('Resolution must be a positive number of at least 32.');
+                }
+                myModelConfig.myInputResolution = myNewResolution;
+
+                // 2. Channels (Color Format)
+                const myNewChannels = parseInt(myChannelsInput.value);
+                if (myNewChannels !== 1 && myNewChannels !== 3) {
+                    throw new Error('Channels must be 1 (Grayscale) or 3 (RGB).');
+                }
+                myModelConfig.myInputChannels = myNewChannels;
+
+                // 3. Confidence Threshold
+                const myNewConfidence = parseFloat(myConfidenceInput.value);
+                if (isNaN(myNewConfidence) || myNewConfidence < 0.0 || myNewConfidence > 1.0) {
+                    throw new Error('Confidence Threshold must be between 0.0 and 1.0.');
+                }
+                myModelConfig.myConfidenceThreshold = myNewConfidence;
+                
+                // 4. Grid Scale Factor
+                const myNewGridFactor = parseInt(myGridFactorInput.value);
+                if (isNaN(myNewGridFactor) || myNewGridFactor <= 0 || myNewResolution % myNewGridFactor !== 0) {
+                     throw new Error('Grid Scale Factor (Stride) must be a positive integer and must divide the Resolution evenly.');
+                }
+                myModelConfig.myGridScaleFactor = myNewGridFactor;
+
+                // 5. Class Labels
+                let myNewLabels = myLabelsInput.value.split(',').map(myLabel => myLabel.trim()).filter(myLabel => myLabel.length > 0);
+                if (myNewLabels.length === 0 || myNewLabels[0].toLowerCase() !== 'background') {
+                    throw new Error('Class Labels must be comma-separated and the first label MUST be "background".');
+                }
+                myModelConfig.myClassLabels = myNewLabels;
+
+                // Update derived and DOM config
+                myUpdateDerivedConfig();
+
+                myStatusElement.textContent = `Config applied! Resolution: ${myModelConfig.myInputResolution}, Channels: ${myModelConfig.myInputChannels}, Classes: ${myModelConfig.myClassLabels.length}. Now, load your model.`;
+                myResetApplication(false); // Reset without clearing config
+            } catch (myError) {
+                myStatusElement.textContent = `Configuration Error: ${myError.message}`;
+                console.error('Configuration Validation Error:', myError);
+            }
+        }
 
         // =================================================================
         // 💻 MODEL LOADING AND STARTUP LOGIC
@@ -248,10 +477,15 @@
          * Gets all interactive elements to disable them during loading.
          */
         function myGetAllButtons() {
+            // Include config inputs as well, except the URL input when loading from URL
             return [
                 ...document.querySelectorAll('.myButton'),
                 myFileInput,
-                myUrlInput
+                myResolutionInput,
+                myChannelsInput,
+                myLabelsInput,
+                myConfidenceInput,
+                myGridFactorInput
             ];
         }
 
@@ -261,6 +495,8 @@
          */
         function myDisableControls(myDisabled) {
             myGetAllButtons().forEach(myEl => myEl.disabled = myDisabled);
+            // URL input is only disabled when loading URL is in progress, not when using file/default
+            myUrlInput.disabled = myDisabled; 
         }
 
         /**
@@ -334,7 +570,7 @@
                 await mySetupWebcam();
 
             } catch (myError) {
-                myStatusElement.textContent = `Failed to load model from ${mySourceType}. Check the console (F12) for details.`;
+                myStatusElement.textContent = `Failed to load model from ${mySourceType}. Check the console (F12) for details. (Model requires ${myInputSize}x${myInputSize}x${myModelConfig.myInputChannels})`;
                 console.error('Model loading error:', myError);
                 
                 myDisableControls(false);
@@ -386,6 +622,7 @@
                 }
 
                 // 1. Capture and Preprocess Frame
+                // myInputSize and myModelConfig.myInputChannels are dynamic now
                 myContext.drawImage(myVideoElement, 0, 0, myInputSize, myInputSize);
                 let myInputTensor = tf.browser.fromPixels(myCanvasElement, myModelConfig.myInputChannels);
 
@@ -417,8 +654,17 @@
             const myGridX = myOutputShape[1];
             const myGridY = myOutputShape[2];
 
+            // Check if model output matches expected grid size derived from config
             if (myGridX !== myGridSize || myGridY !== myGridSize) {
                 console.error("Model output shape mismatch. Expected grid size:", myGridSize, "Actual grid size:", myGridX, "x", myGridY);
+                myStatusElement.textContent = "Model Error: Output shape mismatch. Check configuration!";
+                return;
+            }
+
+            // Check if model output matches expected number of classes
+            if (myNumClasses !== myModelConfig.myClassLabels.length) {
+                console.error(`Model output class count mismatch. Expected: ${myModelConfig.myClassLabels.length}, Actual: ${myNumClasses}`);
+                myStatusElement.textContent = "Model Error: Class count mismatch. Check your Label config!";
                 return;
             }
 
@@ -450,17 +696,14 @@
                         const myCentroidY = (i * myModelConfig.myGridScaleFactor) + (myModelConfig.myGridScaleFactor / 2);
                         
                         const myLabel = myModelConfig.myClassLabels[myMaxClassIndex];
-
-                        // ==========================================================
-                        // 📢 RESTORED CONSOLE LOGGING (This is what you were missing!)
-                        // ==========================================================
+                        
+                        // RESTORED CONSOLE LOGGING
                         console.log(
-                            `[FOMO DETECTION] Class: ${myLabel} | Confidence: ${myMaxProbability.toFixed(3)} | Centroid (X,Y) on 240x240 canvas: (${myCentroidX}, ${myCentroidY})`
+                            `[FOMO DETECTION] Class: ${myLabel} | Confidence: ${myMaxProbability.toFixed(3)} | Centroid (X,Y) on ${myInputSize}x${myInputSize} canvas: (${myCentroidX.toFixed(0)}, ${myCentroidY.toFixed(0)})`
                         );
-                        // ==========================================================
                         
                         // Draw the visualization
-                        myContext.fillStyle = myMaxClassIndex === 1 ? 'rgba(255, 69, 0, 0.8)' : 'rgba(50, 205, 50, 0.8)';
+                        myContext.fillStyle = myMaxClassIndex % 2 === 1 ? 'rgba(255, 69, 0, 0.8)' : 'rgba(50, 205, 50, 0.8)';
                         myContext.fillRect(myCentroidX - 4, myCentroidY - 4, 8, 8); 
                         
                         myContext.font = '10px Arial';
@@ -475,10 +718,14 @@
         /**
          * @function myResetApplication
          * Stops webcam, clears model reference, resets status, and re-enables controls.
+         * @param {boolean} myClearConfig - If true, clears the model reference and stops loop. Defaults to true.
          */
-        function myResetApplication() {
+        function myResetApplication(myClearConfig = true) {
             myStopInferenceLoop();
-            myTfLiteModel = null;
+            
+            if (myClearConfig) {
+                myTfLiteModel = null;
+            }
             
             if (myContext && myCanvasElement) {
                 myContext.clearRect(0, 0, myInputSize, myInputSize);
@@ -486,7 +733,7 @@
                 myContext.fillRect(0, 0, myInputSize, myInputSize);
             }
             
-            myStatusElement.textContent = 'Application Reset. Select a model loading method to start.';
+            myStatusElement.textContent = 'Application Reset. Check configuration and load a model to start.';
             myDisableControls(false); 
             console.log('Application reset.');
         }
