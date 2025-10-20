@@ -1,0 +1,219 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Data Configuration Simulator</title>
+    <!-- Load Tailwind CSS for simple styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <style>
+        /* Minimal custom styling for better visibility */
+        body { font-family: "Inter", sans-serif; }
+        textarea {
+            resize: vertical;
+            min-height: 150px;
+        }
+        .my-card {
+            box-shadow: 0 4px 6px -1px rgba(0, 0, 0, 0.1), 0 2px 4px -2px rgba(0, 0, 0, 0.1);
+        }
+    </style>
+</head>
+<body class="bg-gray-50 min-h-screen p-4 sm:p-8">
+
+    <div class="max-w-4xl mx-auto">
+        <header class="text-center mb-10">
+            <h1 class="text-3xl font-bold text-indigo-700">Model Training Configuration</h1>
+            <p class="text-gray-600">Simulate setting up your features and label definitions.</p>
+        </header>
+
+        <!-- Configuration Grid -->
+        <div class="grid md:grid-cols-2 gap-6 mb-8">
+
+            <!-- Features Input Card -->
+            <div class="my-card bg-white p-6 rounded-xl border border-gray-200">
+                <label for="myFeaturesInput" class="block text-lg font-semibold text-gray-800 mb-2">1. Features Data (X)</label>
+                <p class="text-sm text-gray-500 mb-3">One data point per line. Columns must be consistent.</p>
+                <textarea id="myFeaturesInput" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 text-sm" placeholder="e.g., 1.2, 3.4, 5.6">{{'1.2, 3.4, 5.6
+2.1, 4.3, 6.5
+3.3, 5.5, 7.7
+4.0, 1.1, 2.2
+5.5, 6.6, 7.7'}}</textarea>
+                <p id="myFeaturesCount" class="text-xs text-indigo-600 mt-2 font-medium">Data Points: 5</p>
+            </div>
+
+            <!-- Labels Input Card -->
+            <div class="my-card bg-white p-6 rounded-xl border border-gray-200">
+                <label for="myLabelInput" class="block text-lg font-semibold text-gray-800 mb-2">2. Label Definitions (Y)</label>
+                <p class="text-sm text-gray-500 mb-3">Define your unique class names (one per line).</p>
+                <textarea id="myLabelInput" class="w-full p-3 border border-gray-300 rounded-lg focus:ring-indigo-500 focus:border-indigo-500 text-sm" placeholder="e.g., Cat, Dog, Bird" oninput="myUpdateLabelCount()">{{'Iris-setosa
+Iris-versicolor
+Iris-virginica
+Iris-setosa
+Iris-versicolor'}}</textarea>
+                <p id="myLabelsCount" class="text-xs text-indigo-600 mt-2 font-medium">Calculated Unique Labels: 3</p>
+            </div>
+        </div>
+
+        <!-- Settings and Run Card -->
+        <div class="my-card bg-white p-6 rounded-xl border border-gray-200 mb-8">
+            <h2 class="text-xl font-bold text-gray-800 mb-4">3. Settings Review</h2>
+
+            <div class="flex flex-col sm:flex-row justify-between items-start sm:items-center p-3 mb-4 rounded-lg bg-indigo-50 border border-indigo-200">
+                <div class="font-medium text-gray-700">Calculated Number of Labels (Classes):</div>
+                <div id="myCalculatedLabels" class="text-2xl font-extrabold text-indigo-700 mt-1 sm:mt-0">3</div>
+            </div>
+
+            <div class="text-center">
+                <button
+                    onclick="myHandleRun()"
+                    class="w-full sm:w-auto px-8 py-3 bg-indigo-600 text-white font-semibold rounded-lg hover:bg-indigo-700 transition duration-150 transform hover:scale-[1.02]"
+                >
+                    Run Simulation
+                </button>
+            </div>
+        </div>
+
+        <!-- Results Output Area -->
+        <div id="myResultsOutput" class="my-card bg-white p-6 rounded-xl border border-gray-200 hidden">
+            <h2 class="text-xl font-bold text-green-700 mb-4">Simulation Results</h2>
+            <pre id="myOutputText" class="bg-gray-100 p-4 rounded-lg text-sm whitespace-pre-wrap text-gray-700"></pre>
+        </div>
+    </div>
+
+    <!-- Firebase SDK Imports (Required for Canvas Environment) -->
+    <script type="module">
+        import { initializeApp } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-app.js";
+        import { getAuth, signInAnonymously, signInWithCustomToken } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-auth.js";
+        import { getFirestore } from "https://www.gstatic.com/firebasejs/11.6.1/firebase-firestore.js";
+
+        // Global variables provided by the Canvas environment
+        const myAppId = typeof __app_id !== 'undefined' ? __app_id : 'default-app-id';
+        const myFirebaseConfig = typeof __firebase_config !== 'undefined' ? JSON.parse(__firebase_config) : {};
+        const myInitialAuthToken = typeof __initial_auth_token !== 'undefined' ? __initial_auth_token : null;
+
+        let myApp;
+        let myDb;
+        let myAuth;
+        let myUserId = 'unknown';
+
+        /**
+         * Initializes Firebase and authenticates the user.
+         */
+        async function myInitFirebase() {
+            try {
+                if (Object.keys(myFirebaseConfig).length > 0) {
+                    myApp = initializeApp(myFirebaseConfig);
+                    myDb = getFirestore(myApp);
+                    myAuth = getAuth(myApp);
+
+                    if (myInitialAuthToken) {
+                        await signInWithCustomToken(myAuth, myInitialAuthToken);
+                    } else {
+                        await signInAnonymously(myAuth);
+                    }
+
+                    myUserId = myAuth.currentUser?.uid || crypto.randomUUID();
+                }
+            } catch (error) {
+                console.error("Firebase initialization failed:", error);
+            }
+        }
+
+        // Call the initialization function on load
+        window.onload = function() {
+            myInitFirebase();
+            // Also call the main function to set up initial state
+            myUpdateLabelCount();
+        };
+    </script>
+
+    <!-- Application Logic -->
+    <script>
+        /**
+         * Counts the number of non-empty, unique lines in the label input and updates the UI.
+         */
+        function myUpdateLabelCount() {
+            const myLabelInput = document.getElementById('myLabelInput');
+            const myCalculatedLabelsDiv = document.getElementById('myCalculatedLabels');
+            const myLabelsCount = document.getElementById('myLabelsCount');
+
+            // 1. Get all lines
+            const myRawText = myLabelInput.value;
+            // Split by newline, filter out empty strings/whitespace, and trim spaces
+            const myLines = myRawText.split('\n')
+                                     .map(line => line.trim())
+                                     .filter(line => line.length > 0);
+
+            // 2. Count unique lines (classes)
+            const myUniqueLines = new Set(myLines);
+            const myCount = myUniqueLines.size;
+
+            // 3. Update the UI
+            myCalculatedLabelsDiv.textContent = myCount;
+            myLabelsCount.textContent = `Calculated Unique Labels: ${myCount}`;
+
+            // Also update the features count display if needed (simple count of lines)
+            const myFeaturesInput = document.getElementById('myFeaturesInput');
+            const myFeaturesCount = document.getElementById('myFeaturesCount');
+            const myFeatureLines = myFeaturesInput.value.split('\n')
+                                                        .map(line => line.trim())
+                                                        .filter(line => line.length > 0);
+            myFeaturesCount.textContent = `Data Points: ${myFeatureLines.length}`;
+        }
+
+        /**
+         * Simulates running the configuration process.
+         */
+        function myHandleRun() {
+            // Ensure the count is updated one last time
+            myUpdateLabelCount();
+
+            const myFeaturesInput = document.getElementById('myFeaturesInput');
+            const myLabelInput = document.getElementById('myLabelInput');
+            const myCalculatedLabelsDiv = document.getElementById('myCalculatedLabels');
+            const myResultsOutput = document.getElementById('myResultsOutput');
+            const myOutputText = document.getElementById('myOutputText');
+
+            // Collect data
+            const myFeatureLines = myFeaturesInput.value.split('\n').filter(line => line.trim().length > 0);
+            const myLabelLines = myLabelInput.value.split('\n').map(line => line.trim()).filter(line => line.length > 0);
+            const myUniqueLabels = new Set(myLabelLines);
+
+            const myTotalDataPoints = myFeatureLines.length;
+            const myFeatureColumns = myTotalDataPoints > 0 ? myFeatureLines[0].split(',').map(c => c.trim()).length : 0;
+            const myNumberOfClasses = myUniqueLabels.size;
+            const myUniqueClasses = Array.from(myUniqueLabels).join(', ');
+
+            // Check for potential issues (e.g., mismatch in data points and labels)
+            let myWarning = '';
+            // If the user hasn't supplied *instance* labels, but *definition* labels (which is what the default does)
+            // we skip the length check. If we assume the label box is for *instance labels*, we check length.
+            // For this simulator, we will assume it's the *definition list* for unique classes.
+
+            const myOutputMessage = `
+Configuration successfully loaded for simulation.
+
+--- Summary ---
+Total Data Points (Features): ${myTotalDataPoints}
+Features per Data Point: ${myFeatureColumns} (Assumes comma-separated values)
+Calculated Number of Classes: ${myNumberOfClasses}
+Unique Class Names Detected: ${myUniqueClasses}
+
+${myWarning}
+
+Simulation Started: The model is now being initialized with this configuration.
+`;
+
+            myOutputText.textContent = myOutputMessage;
+            myResultsOutput.classList.remove('hidden');
+
+            // Scroll to the results
+            myResultsOutput.scrollIntoView({ behavior: 'smooth' });
+        }
+
+        // Initialize counts on page load to ensure the defaults are registered
+        // This is handled in the window.onload inside the module script, but we ensure robustness here.
+        document.addEventListener('DOMContentLoaded', myUpdateLabelCount);
+    </script>
+</body>
+</html>
