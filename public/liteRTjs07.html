@@ -1,0 +1,384 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>myExternalFOMODetector</title>
+
+    <!-- Load Tailwind CSS for modern, responsive styling -->
+    <script src="https://cdn.tailwindcss.com"></script>
+    <script>
+        // Use Inter font and configure Tailwind for rounded corners
+        tailwind.config = {
+            theme: {
+                extend: {
+                    fontFamily: {
+                        sans: ['Inter', 'sans-serif'],
+                    },
+                }
+            }
+        }
+    </script>
+    
+    <!-- TensorFlow Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.2.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@0.0.1-alpha.9/dist/tf-tflite.min.js"></script>
+</head>
+<body class="bg-gray-100 min-h-screen flex flex-col items-center p-4 font-sans">
+
+    <script>
+        // =================================================================
+        // 🚀 USER-CONFIGURABLE MODEL SETTINGS
+        // =================================================================
+        const myModelConfig = {
+            // New: Default URL for remote loading
+            myDefaultUrl: 'https://hpssjellis.github.io/my-examples-of-edge-impulse/public/tflite/fomo01.tflite', 
+            
+            // Model parameters
+            myInputResolution: 240, 
+            myGridScaleFactor: 8, // 240 / 30 = 8
+            myConfidenceThreshold: 0.5, 
+            myClassLabels: ['background', 'myObjectOne', 'myObjectTwo', 'another_thing'], 
+            myInputChannels: 3, 
+        };
+
+        // =================================================================
+        // ⚙️ INTERNAL VARIABLES (DO NOT EDIT)
+        // =================================================================
+        let myTfLiteModel = null;
+        let myIsWebcamReady = false;
+        let myCanvasElement = null;
+        let myVideoElement = null;
+        let myContext = null;
+        let myStatusElement = null;
+        let myAnimationFrameId = null;
+        
+        let myFileInput = null;
+        let myUrlInput = null;
+
+        // Derived variables for quick access
+        const myInputSize = myModelConfig.myInputResolution;
+        const myGridSize = myInputSize / myModelConfig.myGridScaleFactor;
+
+        // =================================================================
+        // 🏠 HTML SETUP
+        // =================================================================
+        
+        /**
+         * @function myCreateButton
+         * Helper to create a styled button.
+         * @param {string} myText - Button text.
+         * @param {function} myOnClick - Click handler function.
+         * @returns {HTMLButtonElement} The created button element.
+         */
+        function myCreateButton(myText, myOnClick) {
+            const myButton = document.createElement('button');
+            myButton.textContent = myText;
+            myButton.className = 'myButton w-full sm:w-auto flex-1 bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-2 px-4 rounded-lg shadow-md transition duration-200 ease-in-out transform hover:scale-[1.01]';
+            myButton.onclick = myOnClick;
+            return myButton;
+        }
+
+        /**
+         * @function myCreateDOM
+         * Initializes all necessary DOM elements.
+         */
+        function myCreateDOM() {
+            const myContainer = document.createElement('div');
+            myContainer.className = 'w-full max-w-2xl bg-white p-6 rounded-xl shadow-2xl';
+            
+            // Title
+            const myTitle = document.createElement('h1');
+            myTitle.className = 'text-2xl font-bold mb-4 text-gray-800 text-center';
+            myTitle.textContent = 'External FOMO Detector';
+            myContainer.appendChild(myTitle);
+
+            // Status Message
+            myStatusElement = document.createElement('p');
+            myStatusElement.className = 'myStatus text-sm text-gray-600 mb-4 text-center';
+            myStatusElement.id = 'myStatusMessage';
+            myStatusElement.textContent = 'Select a loading method below to start.';
+            myContainer.appendChild(myStatusElement);
+            
+            // --- Controls Group ---
+            const myControlsDiv = document.createElement('div');
+            myControlsDiv.id = 'myControls';
+            myControlsDiv.className = 'space-y-4 mb-6';
+
+            // 1. Load from File (Method A)
+            const myFileGroup = document.createElement('div');
+            myFileGroup.className = 'border p-3 rounded-lg bg-indigo-50/50';
+            myFileGroup.innerHTML = '<p class="font-medium text-sm text-indigo-800 mb-2">1. Load From Computer File (.tflite)</p>';
+            
+            myFileInput = document.createElement('input'); 
+            myFileInput.type = 'file';
+            myFileInput.id = 'myFileInput';
+            myFileInput.accept = '.tflite';
+            myFileInput.className = 'w-full text-sm text-gray-500 file:mr-4 file:py-2 file:px-4 file:rounded-full file:border-0 file:text-sm file:font-semibold file:bg-indigo-50 file:text-indigo-700 hover:file:bg-indigo-100';
+            myFileInput.onchange = myLoadFromFile; // Use change event to trigger load
+            myFileGroup.appendChild(myFileInput);
+            myControlsDiv.appendChild(myFileGroup);
+
+            // 2. Load from Default URL (Method B)
+            const myDefaultUrlButton = myCreateButton(`2. Load Default URL (${myModelConfig.myDefaultUrl.split('/').pop()})`, myLoadFromDefaultUrl);
+            myControlsDiv.appendChild(myDefaultUrlButton);
+
+            // 3. Load from Custom URL (New Requirement)
+            const myUrlGroup = document.createElement('div');
+            myUrlGroup.className = 'border p-3 rounded-lg bg-gray-50';
+            myUrlGroup.innerHTML = '<p class="font-medium text-sm text-gray-800 mb-2">3. Load From Custom URL</p>';
+
+            myUrlInput = document.createElement('input');
+            myUrlInput.type = 'text';
+            myUrlInput.id = 'myUrlInput';
+            myUrlInput.value = myModelConfig.myDefaultUrl; // Set default value
+            myUrlInput.placeholder = 'Enter .tflite URL here (e.g., https://.../model.tflite)';
+            myUrlInput.className = 'w-full p-2 border border-gray-300 rounded-md focus:ring-indigo-500 focus:border-indigo-500 mb-2';
+            myUrlGroup.appendChild(myUrlInput);
+
+            const myCustomUrlButton = myCreateButton('Load Custom URL and Start Webcam', myLoadFromCustomUrl);
+            myUrlGroup.appendChild(myCustomUrlButton);
+            myControlsDiv.appendChild(myUrlGroup);
+            
+            myContainer.appendChild(myControlsDiv);
+            document.body.appendChild(myContainer);
+
+
+            // Video and Canvas
+            myVideoElement = document.createElement('video');
+            myVideoElement.id = 'myVideo';
+            myVideoElement.setAttribute('playsinline', '');
+            myVideoElement.setAttribute('autoplay', '');
+            myVideoElement.className = 'hidden'; // Hidden video to feed the canvas
+            document.body.appendChild(myVideoElement);
+
+            myCanvasElement = document.createElement('canvas');
+            myCanvasElement.id = 'myCanvas';
+            myCanvasElement.width = myInputSize;
+            myCanvasElement.height = myInputSize; 
+            myCanvasElement.className = 'mt-6 border-4 border-indigo-600 rounded-xl shadow-xl w-full max-w-xs sm:max-w-md bg-black';
+            document.body.appendChild(myCanvasElement);
+
+            myContext = myCanvasElement.getContext('2d');
+        }
+        
+        window.onload = myCreateDOM; // Create everything on load
+
+        // =================================================================
+        // 💻 MODEL LOADING AND STARTUP LOGIC
+        // =================================================================
+        
+        /**
+         * @function myLoadFromDefaultUrl
+         * Wrapper function to load the model from the configured default URL.
+         */
+        function myLoadFromDefaultUrl() {
+            myLoadModelAndStartCamera(myModelConfig.myDefaultUrl);
+        }
+
+        /**
+         * @function myLoadFromCustomUrl
+         * Wrapper function to load the model from the text input URL.
+         */
+        function myLoadFromCustomUrl() {
+            const myCustomUrl = myUrlInput.value.trim();
+            if (myCustomUrl) {
+                myLoadModelAndStartCamera(myCustomUrl);
+            } else {
+                myStatusElement.textContent = 'Error: Please enter a valid URL in the custom URL field.';
+            }
+        }
+
+        /**
+         * @function myLoadFromFile
+         * Handles the change event from the file input to load a local file.
+         */
+        function myLoadFromFile() {
+            const mySelectedFile = myFileInput.files[0];
+            if (mySelectedFile) {
+                // Pass the File object directly
+                myLoadModelAndStartCamera(mySelectedFile);
+            } else {
+                myStatusElement.textContent = 'Please select a .tflite file first.';
+            }
+        }
+
+        /**
+         * @function myLoadModelAndStartCamera
+         * Main function to load the model (File or URL) and start the webcam.
+         * @param {string|File} mySource - The URL string or the File object.
+         */
+        async function myLoadModelAndStartCamera(mySource) {
+            myStopInferenceLoop(); // Stop any previous loop
+            
+            const myButtons = document.querySelectorAll('.myButton');
+            myButtons.forEach(myBtn => myBtn.disabled = true);
+            myFileInput.disabled = true;
+
+            const mySourceType = typeof mySource === 'string' ? 'URL' : 'File';
+            const myDisplayPath = typeof mySource === 'string' ? mySource : mySource.name;
+            
+            myStatusElement.textContent = `Loading model from ${mySourceType}: ${myDisplayPath}...`;
+
+            try {
+                // tflite.loadTFLiteModel handles both string (URL) and File object inputs
+                myTfLiteModel = await tflite.loadTFLiteModel(mySource);
+                
+                myStatusElement.textContent = 'Model loaded successfully! Starting webcam...';
+                console.log(`TFLite Model Loaded from ${mySourceType}:`, myDisplayPath);
+
+                // Start the webcam
+                await mySetupWebcam();
+
+            } catch (myError) {
+                myStatusElement.textContent = `Failed to load model from ${mySourceType}. Check the console (F12) for details.`;
+                console.error('Model loading error:', myError);
+                
+                myButtons.forEach(myBtn => myBtn.disabled = false);
+                myFileInput.disabled = false;
+            }
+        }
+
+        /**
+         * @function mySetupWebcam
+         * Initializes the webcam stream.
+         */
+        async function mySetupWebcam() {
+            if (myIsWebcamReady) return;
+
+            try {
+                const myStream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        width: myInputSize,
+                        height: myInputSize,
+                        facingMode: 'user'
+                    },
+                    audio: false
+                });
+
+                myVideoElement.srcObject = myStream;
+                // Wait for video metadata to load
+                await new Promise(myResolve => myVideoElement.onloadedmetadata = myResolve); 
+
+                myVideoElement.play();
+                myIsWebcamReady = true;
+                myStatusElement.textContent = 'Webcam active. Running inference... (Look for squares on the canvas)';
+
+                myRunInferenceLoop();
+
+            } catch (myError) {
+                myStatusElement.textContent = `Error accessing webcam: ${myError.message}.`;
+                console.error('Webcam access error:', myError);
+                document.querySelectorAll('.myButton').forEach(myBtn => myBtn.disabled = false);
+                myFileInput.disabled = false;
+            }
+        }
+
+        /**
+         * @function myRunInferenceLoop
+         * The main loop for frame capture and model inference.
+         */
+        function myRunInferenceLoop() {
+            tf.tidy(() => {
+                if (!myTfLiteModel || !myIsWebcamReady) {
+                    return;
+                }
+
+                // 1. Capture and Preprocess Frame
+                myContext.drawImage(myVideoElement, 0, 0, myInputSize, myInputSize);
+                let myInputTensor = tf.browser.fromPixels(myCanvasElement, myModelConfig.myInputChannels);
+
+                // Normalize and add batch dimension [1, H, W, C]
+                let myNormalizedTensor = myInputTensor
+                    .resizeBilinear([myInputSize, myInputSize])
+                    .cast('float32')
+                    .div(255.0)
+                    .expandDims(0); 
+
+                // 2. Run Inference
+                const myOutputTensor = myTfLiteModel.predict(myNormalizedTensor);
+
+                // 3. Post-processing (FOMO-specific)
+                myPostProcessFomo(myOutputTensor);
+            }); 
+
+            myAnimationFrameId = requestAnimationFrame(myRunInferenceLoop);
+        }
+        
+        /**
+         * @function myPostProcessFomo
+         * Interprets the FOMO output tensor to draw bounding boxes.
+         */
+        function myPostProcessFomo(myOutputTensor) {
+            const myPredictionData = myOutputTensor.dataSync();
+            const myOutputShape = myOutputTensor.shape;
+            const myNumClasses = myOutputShape[3]; 
+            const myGridX = myOutputShape[1];
+            const myGridY = myOutputShape[2];
+
+            if (myGridX !== myGridSize || myGridY !== myGridSize) {
+                console.error("Model output shape mismatch.");
+                return;
+            }
+
+            // Redraw the video frame (important for continuous stream)
+            myContext.drawImage(myVideoElement, 0, 0, myInputSize, myInputSize); 
+
+            // Iterate over the prediction grid (i=row, j=column)
+            for (let i = 0; i < myGridSize; i++) {
+                for (let j = 0; j < myGridSize; j++) {
+                    const myCellStartIndex = (i * myGridSize * myNumClasses) + (j * myNumClasses);
+
+                    let myMaxProbability = 0;
+                    let myMaxClassIndex = 0;
+
+                    // Find the highest probability class
+                    for (let k = 0; k < myNumClasses; k++) {
+                        const myProbability = myPredictionData[myCellStartIndex + k];
+                        if (myProbability > myMaxProbability) {
+                            myMaxProbability = myProbability;
+                            myMaxClassIndex = k;
+                        }
+                    }
+
+                    // Check: Not background class (index 0) AND meets confidence threshold
+                    if (myMaxClassIndex !== 0 && myMaxProbability >= myModelConfig.myConfidenceThreshold) {
+                        
+                        // Calculate the centroid coordinates in the final canvas space (scaled up)
+                        const myCentroidX = (j * myModelConfig.myGridScaleFactor) + (myModelConfig.myGridScaleFactor / 2);
+                        const myCentroidY = (i * myModelConfig.myGridScaleFactor) + (myModelConfig.myGridScaleFactor / 2);
+                        
+                        const myLabel = myModelConfig.myClassLabels[myMaxClassIndex];
+                        
+                        // Draw the visualization
+                        myContext.fillStyle = myMaxClassIndex === 1 ? 'rgba(252, 165, 165, 0.8)' : 'rgba(110, 231, 183, 0.8)'; // Red or Green shade
+                        myContext.fillRect(myCentroidX - 4, myCentroidY - 4, 8, 8); // Draw a small square at the centroid
+                        
+                        myContext.font = '10px Arial';
+                        myContext.fillStyle = myMaxClassIndex === 1 ? 'rgb(153, 27, 27)' : 'rgb(4, 120, 87)'; // Darker color for text
+                        myContext.textAlign = 'center';
+                        myContext.fillText(myLabel, myCentroidX, myCentroidY - 6);
+                    }
+                }
+            }
+        }
+
+        /**
+         * @function myStopInferenceLoop
+         * Stops the continuous frame request loop and releases webcam.
+         */
+        function myStopInferenceLoop() {
+            if (myAnimationFrameId) {
+                cancelAnimationFrame(myAnimationFrameId);
+                myAnimationFrameId = null;
+            }
+            if (myVideoElement && myVideoElement.srcObject) {
+                // Stops all tracks on the stream
+                myVideoElement.srcObject.getTracks().forEach(track => track.stop());
+                myVideoElement.srcObject = null;
+            }
+            myIsWebcamReady = false;
+        }
+    </script>
+</body>
+</html>
