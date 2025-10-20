@@ -127,8 +127,8 @@
 
             <label for="model-url" class="label">Load from URL (Requires Network)</label>
             <input type="text" id="model-url" class="input-text" 
-                       value="./tflite/ei-w7-8-esp32-accel-words-both-better-nn-classifier-tensorflow-lite-float32-model.38.tflite" 
-                       placeholder="Enter the URL of your .tflite file">
+                        value="./tflite/ei-w7-8-esp32-accel-words-both-better-nn-classifier-tensorflow-lite-float32-model.38.tflite" 
+                        placeholder="Enter the URL of your .tflite file">
             
             <button onclick="loadModel()" id="load-button" class="button button-purple">
                 Load File/URL and Inspect
@@ -142,7 +142,7 @@
             </h2>
             
             <div id="model-topology">
-                <h3 style="font-size: 1.125rem; font-weight: 600; color: #1f2937; margin-top: 0; margin-bottom: 8px;">Model Topology</h3>
+                <h3 style="font-size: 1.125rem; font-weight: 600; color: #1f2937; margin-top: 0; margin-bottom: 8px;">Model Topology (Operations)</h3>
                 <div id="layer-count-summary" class="status status-info">Layer Count: N/A</div>
                 <div class="result-block" style="margin-top: 8px;">
                     <strong style="color: #6d28d9;">First 3 Operations (Type: Name)</strong>
@@ -151,28 +151,29 @@
                     </ul>
                 </div>
                 <p class="text-detail" style="text-align: left; margin-top: 16px; margin-bottom: 8px; font-style: normal;">
-                    **NOTE:** This extraction relies on non-public properties of the TFLite runtime. For the complete, raw model graph (all layers/operations), check the **Developer Console (F12)** and navigate the logged object: **`tfliteModel` → `executor_` → `graph_` → `nodes`**.
+                    **NOTE:** This layer extraction relies on non-public properties of the TFLite runtime.
                 </p>
             </div>
             
             <hr style="margin: 20px 0; border: 0; border-top: 1px solid #e5e7eb;">
 
             <div id="model-signature" style="margin-bottom: 16px;">
-                <h3 style="font-size: 1.125rem; font-weight: 600; color: #1f2937; margin-top: 0; margin-bottom: 8px;">Input/Output Signature</h3>
+                <h3 style="font-size: 1.125rem; font-weight: 600; color: #1f2937; margin-top: 0; margin-bottom: 8px;">Model Input/Output Signature</h3>
                 <p class="text-detail" style="text-align: left; margin-bottom: 16px; margin-top: 0;">
-                    Enter the exact input shape your model expects for a successful dry run.
+                    Below are the required **Input** tensor(s) and expected **Output** tensor(s) defined in the model.
                 </p>
 
+                <div id="input-summary" class="status status-info result-block">Input Signature: N/A</div>
+                <div id="output-summary" class="status status-info result-block">Output Signature: N/A</div>
+                
+                <h3 style="font-size: 1.125rem; font-weight: 600; color: #1f2937; margin-top: 20px; margin-bottom: 8px;">Test Inference Input</h3>
                 <div>
                     <label for="input-shape" class="label">
-                        Expected Input Shape (e.g., `1, 260` for the current model)
+                        Expected Input Tensor Shape (e.g., `1, 260`)
                     </label>
                     <input type="text" id="input-shape" class="input-text" 
-                               placeholder="Enter comma-separated dimensions, e.g., 1,260" value="1, 260">
+                                placeholder="Enter comma-separated dimensions, e.g., 1,260" value="1, 260">
                 </div>
-                
-                <div id="input-summary" class="status status-info result-block">Input Shape Placeholder</div>
-                <div id="output-summary" class="status status-info result-block">Output Shape Placeholder</div>
             </div>
             
             <button onclick="runInference()" id="run-button" class="button button-blue" disabled>
@@ -188,7 +189,7 @@
             <div id="inference-status" class="status status-info">Run the test inference to see results.</div>
             
             <div style="margin-top: 12px; display: flex; flex-direction: column; gap: 12px;">
-                <div id="output-shape-result" class="result-block">Output Shape: N/A</div>
+                <div id="output-shape-result" class="result-block">Inference Output Shape: N/A</div>
                 <div id="output-data-preview" class="result-block">Data Preview (First 10 values): N/A</div>
             </div>
         </div>
@@ -217,8 +218,6 @@
 
         /**
          * Utility function to update the main status message block.
-         * @param {string} message - The message to display.
-         * @param {string} type - 'info', 'loaded', or 'error'.
          */
         function updateStatus(message, type = 'info') {
             statusEl.textContent = message;
@@ -234,24 +233,20 @@
             tfliteModel = null;
             inspectionSection.classList.add('hidden');
             outputSection.classList.add('hidden');
-            inputSummaryEl.textContent = 'Input Shape Placeholder';
-            outputSummaryEl.textContent = 'Output Shape Placeholder';
-            layerCountSummaryEl.textContent = 'Layer Count: N/A';
+            // FIXED: Resetting signature details to N/A
+            inputSummaryEl.textContent = 'Input Signature: N/A';
+            outputSummaryEl.textContent = 'Output Signature: N/A';
+            // END FIXED
+            layerCountSummaryEl.textContent = 'Total Operations (Nodes): N/A';
             layerDetailsListEl.innerHTML = '<li class="layer-item">Waiting for model load...</li>';
-            outputShapeResultEl.textContent = 'Output Shape: N/A';
+            outputShapeResultEl.textContent = 'Inference Output Shape: N/A';
             outputDataPreviewEl.textContent = 'Data Preview (First 10 values): N/A';
             inferenceStatusEl.textContent = 'Run the test inference to see results.';
             runBtn.disabled = true;
-            // IMPORTANT: Do NOT clear modelFileEl.value here if it was just changed,
-            // as we want to load the selected file. Clearing it happens when the
-            // process finishes or on a manual URL load to avoid confusion.
-            // modelFileEl.value = ''; // We'll only clear this on successful URL load for example.
         }
 
         /**
          * Reads a local file into an ArrayBuffer using FileReader.
-         * @param {File} file - The file object to read.
-         * @returns {Promise<ArrayBuffer>}
          */
         function readFileAsArrayBuffer(file) {
             return new Promise((resolve, reject) => {
@@ -273,8 +268,10 @@
             let layerCount = 0;
 
             try {
-                // Accessing the internal graph structure through the executor
-                const graph = model.executor && model.executor.graph;
+                // FIXED: Adjusted the path to a more commonly observed internal location
+                // The executor has an inner property 'tflite' for the TFLite backend
+                const tfliteExecutor = model.executor && model.executor.tflite; 
+                const graph = tfliteExecutor && tfliteExecutor.graph;
                 
                 if (graph && graph.nodes) {
                     // graph.nodes is an object where keys are node names (operations)
@@ -288,7 +285,7 @@
                         layerCount++;
                     }
                 } else {
-                    layerInfo.push({ op: "ERROR", name: "Internal graph structure not found." });
+                    layerInfo = [{ op: "WARNING", name: "Internal graph structure not reliably found." }];
                 }
 
             } catch (e) {
@@ -337,6 +334,7 @@
             try {
                 // Initialize tfjs-tflite Wasm path (required for tflite.loadTFLiteModel to work)
                 if (typeof tflite.setWasmPath === 'function') {
+                    // Use an absolute path to the CDN
                     tflite.setWasmPath('https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@0.0.1-alpha.9/dist/');
                 }
 
@@ -349,10 +347,9 @@
                 // --- CONSOLE OUTPUT FOR ANALYSIS OBJECT ---
                 console.log("--------------------------------------------------------------------");
                 console.log("MODEL ANALYSIS OBJECT (tfliteModel):");
-                console.log("To see the full TFLite graph structure (the layers/operations):");
-                console.log("1. Expand the object logged below.");
-                console.log("2. Follow the path: [tfliteModel] -> executor_ -> graph_ -> nodes");
-                console.log(tfliteModel);
+                console.log("tfliteModel.inputs:", tfliteModel.inputs);
+                console.log("tfliteModel.outputs:", tfliteModel.outputs);
+                console.log("Full Object (tfliteModel):", tfliteModel);
                 console.log("--------------------------------------------------------------------");
                 
                 // Show inspection sections
@@ -372,18 +369,39 @@
         }
 
         /**
-         * 2. Inspects and displays the expected input signature and model topology.
+         * 2. Inspects and displays the **actual model signature** and topology.
          */
         function inspectModel() {
             if (!tfliteModel) return;
 
-            // --- Display Input/Output Placeholders ---
-            inputSummaryEl.className = 'status status-info result-block';
-            inputSummaryEl.textContent = `Input Tensor Shape: User-defined (e.g., [${inputShapeEl.value}])`;
-
-            outputSummaryEl.className = 'status status-info result-block';
-            outputSummaryEl.textContent = 'Output Tensor Shape: Unknown until test inference is run.';
+            // --- FIXED: Display Input/Output Signature from public properties ---
             
+            // Input Signature
+            if (tfliteModel.inputs && tfliteModel.inputs.length > 0) {
+                const inputSignature = tfliteModel.inputs.map(input => 
+                    `Name: **${input.name}** | Shape: **[${input.shape ? input.shape.join(', ') : '?'}]** | DType: **${input.dtype}**`
+                ).join('; ');
+                inputSummaryEl.textContent = `Input Signature: ${inputSignature}`;
+                inputSummaryEl.className = 'status status-info result-block';
+            } else {
+                inputSummaryEl.textContent = 'Input Signature: N/A - Model has no defined inputs.';
+                inputSummaryEl.className = 'status status-error result-block';
+            }
+            
+            // Output Signature
+            if (tfliteModel.outputs && tfliteModel.outputs.length > 0) {
+                const outputSignature = tfliteModel.outputs.map(output => 
+                    `Name: **${output.name}** | Shape: **[${output.shape ? output.shape.join(', ') : '?'}]** | DType: **${output.dtype}**`
+                ).join('; ');
+                outputSummaryEl.textContent = `Output Signature: ${outputSignature}`;
+                outputSummaryEl.className = 'status status-info result-block';
+            } else {
+                outputSummaryEl.textContent = 'Output Signature: N/A - Model has no defined outputs.';
+                outputSummaryEl.className = 'status status-error result-block';
+            }
+            
+            // --- End FIXED: Signature Display ---
+
             // --- Extract and Display Topology ---
             const topology = getLayerDetails(tfliteModel);
             
@@ -392,7 +410,7 @@
 
             layerDetailsListEl.innerHTML = ''; // Clear existing list
 
-            if (topology.layers.length > 0) {
+            if (topology.layers.length > 0 && topology.layers[0].op !== "WARNING") {
                 // Display the first 3 operations
                 topology.layers.slice(0, 3).forEach(layer => {
                     const listItem = document.createElement('li');
@@ -405,11 +423,11 @@
                     const moreItem = document.createElement('li');
                     moreItem.className = 'layer-item';
                     moreItem.style.fontStyle = 'italic';
-                    moreItem.textContent = `... and ${topology.layers.length - 3} more operations. Check console for full list.`;
+                    moreItem.textContent = `... and ${topology.layers.length - 3} more operations. Check console (tfliteModel object) for full list.`;
                     layerDetailsListEl.appendChild(moreItem);
                 }
             } else {
-                layerDetailsListEl.innerHTML = '<li class="layer-item">Could not automatically extract layer details.</li>';
+                layerDetailsListEl.innerHTML = '<li class="layer-item">Could not automatically extract layer details. (See console for details/manual inspection.)</li>';
             }
         }
 
@@ -459,13 +477,13 @@
                     const inputTensor = tf.tensor(mockData, inputShape, 'float32');
                     
                     // --- CONSOLE OUTPUT FOR ANALYSIS OBJECT (Input Tensor) ---
-                    console.log("Input Tensor (Check shape and dtype):", inputTensor);
+                    console.log("Test Input Tensor (Check shape and dtype):", inputTensor);
 
                     // 2. Run Prediction
                     const outputTensor = tfliteModel.predict(inputTensor);
                     
                     // --- CONSOLE OUTPUT FOR ANALYSIS OBJECT (Output Tensor) ---
-                    console.log("Output Tensor (Check shape and dtype):", outputTensor);
+                    console.log("Test Output Tensor (Check shape and dtype):", outputTensor);
 
                     // 3. Display Results
                     outputSection.classList.remove('hidden');
@@ -473,11 +491,8 @@
                     const outputShape = outputTensor.shape;
                     const outputData = outputTensor.dataSync();
 
-                    outputShapeResultEl.textContent = `Output Shape: [${outputShape.join(', ')}]`;
+                    outputShapeResultEl.textContent = `Inference Output Shape: [${outputShape.join(', ')}]`;
                     outputDataPreviewEl.textContent = `Data Preview (First 10 values): [${Array.from(outputData).slice(0, 10).map(v => v.toFixed(4)).join(', ')}${outputData.length > 10 ? ', ...' : ''}]`;
-
-                    // Update the Output Signature summary
-                    outputSummaryEl.textContent = `Output Tensor Shape: [${outputShape.join(', ')}] (Type: ${outputTensor.dtype})`;
 
                     // Success status
                     inferenceStatusEl.textContent = 'Inference complete! Output data is shown below.';
@@ -494,19 +509,28 @@
             }
         }
 
-        // 💡 **THE FIX:** Add an event listener to the file input.
-        // When a file is selected (change event), call the loadModel function.
+        // Event listener for local file selection
         modelFileEl.addEventListener('change', () => {
-            // Check if a file has actually been selected
             if (modelFileEl.files.length > 0) {
-                // Clear the URL to ensure the file takes precedence
                 modelUrlEl.value = ''; 
                 loadModel();
             }
         });
 
-        // The loadModel() is still called by the button for the URL, 
-        // and its logic handles both the file and the URL fields.
+        // Event listener for input shape change (only updates the signature display)
+        inputShapeEl.addEventListener('input', () => {
+            if (tfliteModel) {
+                // Update the user-defined shape placeholder text without re-running inspection
+                const shapeString = inputShapeEl.value.trim();
+                if (tfliteModel.inputs && tfliteModel.inputs.length > 0) {
+                    // Only update the shape part if there is a primary input
+                    const primaryInput = tfliteModel.inputs[0];
+                    const newSignature = `Name: **${primaryInput.name}** | Shape: **User-defined [${shapeString}]** | DType: **${primaryInput.dtype}**`;
+                    inputSummaryEl.textContent = `Input Signature: ${newSignature}`;
+                }
+            }
+        });
+        
     </script>
 </body>
 </html>
