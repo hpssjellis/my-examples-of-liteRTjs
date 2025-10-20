@@ -1,0 +1,499 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>myVisionClassifier</title>
+
+    <!-- Minimal, Simple CSS -->
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            margin: 20px; 
+            background-color: #f0f0f0; 
+        }
+        #myContainer { 
+            max-width: 480px; 
+            width: 100%; 
+            background: white; 
+            padding: 20px; 
+            border-radius: 8px; 
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1); 
+            margin-bottom: 20px;
+        }
+        #myCanvas { 
+            border: 2px solid #00a680; /* Teal border for classification */
+            border-radius: 4px; 
+            margin-top: 20px; 
+            background-color: #333; 
+            width: 96px; /* Explicit size for the classification input */
+            height: 96px;
+            max-width: 96px; 
+            display: block;
+        }
+        #myVideo { 
+            display: none; 
+        } 
+        .myButton { 
+            background-color: #00a680; 
+            color: white; 
+            padding: 10px 15px; 
+            border: none; 
+            border-radius: 4px; 
+            cursor: pointer; 
+            font-size: 16px; 
+            margin-top: 10px; 
+            width: 100%; 
+            box-sizing: border-box;
+            transition: background-color 0.3s;
+        }
+        .myButton:hover { 
+            background-color: #007a5f; 
+        }
+        .myButton:disabled { 
+            background-color: #ccc; 
+            cursor: not-allowed; 
+        }
+        .myStatus { 
+            margin-top: 10px; 
+            font-weight: bold; 
+            color: #333; 
+            text-align: center; 
+            padding: 10px; 
+            border-radius: 4px; 
+            background-color: #e0fcf5;
+            border: 1px solid #b2f0e0;
+        }
+        .myInput { 
+            width: 100%; 
+            padding: 8px; 
+            border: 1px solid #ccc; 
+            border-radius: 4px; 
+            box-sizing: border-box; 
+        }
+        .myGroup { 
+            border: 1px dashed #bbb; 
+            padding: 15px; 
+            border-radius: 4px; 
+            margin-top: 15px; 
+        }
+        #myPredictionResult {
+            text-align: center;
+            font-size: 1.2em;
+            margin-top: 15px;
+            min-height: 40px; /* Prevent layout shift */
+        }
+    </style>
+    
+    <!-- TensorFlow Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@0.0.1-alpha.9/dist/tf-tflite.min.js"></script>
+</head>
+<body>
+
+    <script>
+        // =================================================================
+        // 🚀 USER-CONFIGURABLE MODEL SETTINGS
+        // =================================================================
+        const myModelConfig = {
+            // Default URL pointing to the user-specified local repository path
+            myDefaultUrl: './tflite/classification01.tflite', 
+            
+            // NOTE: Classification models often use 96x96 or 224x224.
+            myInputResolution: 96, 
+            myConfidenceThreshold: 0.7, // Higher threshold often works better for classification
+            // Update these labels to match the classes in your classification01.tflite model
+            myClassLabels: ['cat', 'dog', 'background_noise', 'my_custom_class'], 
+            myInputChannels: 3, 
+        };
+
+        // =================================================================
+        // ⚙️ INTERNAL VARIABLES 
+        // =================================================================
+        let myTfLiteModel = null;
+        let myIsWebcamReady = false;
+        let myCanvasElement = null;
+        let myVideoElement = null;
+        let myContext = null;
+        let myStatusElement = null;
+        let myPredictionElement = null;
+        let myAnimationFrameId = null;
+        
+        let myFileInput = null;
+        let myUrlInput = null;
+
+        const myInputSize = myModelConfig.myInputResolution;
+
+        // =================================================================
+        // 🏠 HTML SETUP (Simple DOM Creation)
+        // =================================================================
+        
+        /**
+         * @function myCreateDOM
+         * Initializes all necessary DOM elements.
+         */
+        function myCreateDOM() {
+            const myContainer = document.createElement('div');
+            myContainer.id = 'myContainer';
+            
+            const myTitle = document.createElement('h1');
+            myTitle.style.fontSize = '1.5em';
+            myTitle.style.fontWeight = 'bold';
+            myTitle.style.marginBottom = '15px';
+            myTitle.style.textAlign = 'center';
+            myTitle.textContent = 'Vision Classification App';
+            myContainer.appendChild(myTitle);
+
+            myStatusElement = document.createElement('p');
+            myStatusElement.id = 'myStatusMessage';
+            myStatusElement.className = 'myStatus';
+            myStatusElement.textContent = 'Select a model loading method to start.';
+            myContainer.appendChild(myStatusElement);
+            
+            // --- Controls Group ---
+            const myControlsDiv = document.createElement('div');
+            myControlsDiv.id = 'myControls';
+
+            // 1. Load from File
+            const myFileGroup = document.createElement('div');
+            myFileGroup.className = 'myGroup';
+            myFileGroup.style.borderColor = '#00a680';
+            myFileGroup.style.backgroundColor = '#f7fffe';
+
+            const myFileLabel = document.createElement('p');
+            myFileLabel.style.fontWeight = 'bold';
+            myFileLabel.textContent = `1. Load From Computer File (${myModelConfig.myDefaultUrl.split('/').pop()}):`;
+            myFileGroup.appendChild(myFileLabel);
+            
+            myFileInput = document.createElement('input'); 
+            myFileInput.type = 'file';
+            myFileInput.id = 'myFileInput';
+            myFileInput.accept = '.tflite';
+            myFileInput.style.marginTop = '10px';
+            myFileInput.onchange = myLoadFromFile; 
+            myFileGroup.appendChild(myFileInput);
+            myControlsDiv.appendChild(myFileGroup);
+
+            // 2. Load from Default URL
+            const myDefaultUrlButton = document.createElement('button');
+            myDefaultUrlButton.className = 'myButton';
+            myDefaultUrlButton.textContent = `2. Load Default URL (${myModelConfig.myDefaultUrl})`;
+            myDefaultUrlButton.onclick = myLoadFromDefaultUrl;
+            myControlsDiv.appendChild(myDefaultUrlButton);
+
+            // 3. Load from Custom URL
+            const myUrlGroup = document.createElement('div');
+            myUrlGroup.className = 'myGroup';
+
+            const myUrlLabel = document.createElement('p');
+            myUrlLabel.style.fontWeight = 'bold';
+            myUrlLabel.textContent = '3. Load From Custom URL:';
+            myUrlGroup.appendChild(myUrlLabel);
+
+            myUrlInput = document.createElement('input');
+            myUrlInput.type = 'text';
+            myUrlInput.id = 'myUrlInput';
+            myUrlInput.value = myModelConfig.myDefaultUrl; 
+            myUrlInput.placeholder = 'Enter .tflite URL here';
+            myUrlInput.className = 'myInput';
+            myUrlInput.style.marginTop = '8px';
+            myUrlGroup.appendChild(myUrlInput);
+
+            const myCustomUrlButton = document.createElement('button');
+            myCustomUrlButton.className = 'myButton';
+            myCustomUrlButton.textContent = 'Load Custom URL and Start Webcam';
+            myCustomUrlButton.onclick = myLoadFromCustomUrl;
+            myUrlGroup.appendChild(myCustomUrlButton);
+            
+            myControlsDiv.appendChild(myUrlGroup);
+
+            // 4. Reset Button 
+            const myResetButton = document.createElement('button');
+            myResetButton.className = 'myButton';
+            myResetButton.textContent = 'Reset / Stop Webcam';
+            myResetButton.onclick = myResetApplication;
+            myResetButton.style.marginTop = '25px'; 
+            myControlsDiv.appendChild(myResetButton);
+            
+            myContainer.appendChild(myControlsDiv);
+            document.body.appendChild(myContainer);
+
+            // Prediction Result Display
+            myPredictionElement = document.createElement('p');
+            myPredictionElement.id = 'myPredictionResult';
+            myPredictionElement.textContent = 'Waiting for inference...';
+            document.body.appendChild(myPredictionElement);
+
+            // Video and Canvas
+            myVideoElement = document.createElement('video');
+            myVideoElement.id = 'myVideo';
+            myVideoElement.setAttribute('playsinline', '');
+            myVideoElement.setAttribute('autoplay', '');
+            document.body.appendChild(myVideoElement);
+
+            myCanvasElement = document.createElement('canvas');
+            myCanvasElement.id = 'myCanvas';
+            myCanvasElement.width = myInputSize;
+            myCanvasElement.height = myInputSize; 
+            document.body.appendChild(myCanvasElement);
+
+            myContext = myCanvasElement.getContext('2d');
+        }
+        
+        window.onload = myCreateDOM; 
+
+        // =================================================================
+        // 💻 MODEL LOADING AND STARTUP LOGIC
+        // =================================================================
+        
+        /**
+         * @function myGetAllButtons
+         * Gets all interactive elements to disable them during loading.
+         */
+        function myGetAllButtons() {
+            return [
+                ...document.querySelectorAll('.myButton'),
+                myFileInput,
+                myUrlInput
+            ];
+        }
+
+        /**
+         * @function myDisableControls
+         * Disables control elements during loading.
+         */
+        function myDisableControls(myDisabled) {
+            myGetAllButtons().forEach(myEl => myEl.disabled = myDisabled);
+        }
+
+        /**
+         * @function myLoadFromDefaultUrl
+         * Wrapper function to load the model from the configured default URL.
+         */
+        async function myLoadFromDefaultUrl() {
+            await myLoadModelAndStartCamera(myModelConfig.myDefaultUrl);
+        }
+
+        /**
+         * @function myLoadFromCustomUrl
+         * Wrapper function to load the model from the text input URL.
+         */
+        async function myLoadFromCustomUrl() {
+            const myCustomUrl = myUrlInput.value.trim();
+            if (myCustomUrl) {
+                await myLoadModelAndStartCamera(myCustomUrl);
+            } else {
+                myStatusElement.textContent = 'Error: Please enter a valid URL in the custom URL field.';
+            }
+        }
+
+        /**
+         * @function myLoadFromFile
+         * Handles the change event from the file input to load a local file.
+         */
+        async function myLoadFromFile() {
+            const mySelectedFile = myFileInput.files[0];
+            if (mySelectedFile) {
+                await myLoadModelAndStartCamera(mySelectedFile);
+            } else {
+                myDisableControls(false); 
+                myStatusElement.textContent = 'Please select a .tflite file first or choose another method.';
+            }
+        }
+
+        /**
+         * @function myLoadModelAndStartCamera
+         * Main function to load the model (File or URL) and start the webcam.
+         * @param {string|File} mySource - The URL string or the File object.
+         */
+        async function myLoadModelAndStartCamera(mySource) {
+            myStopInferenceLoop(); 
+            myDisableControls(true);
+
+            const mySourceType = typeof mySource === 'string' ? 'URL' : 'File';
+            const myDisplayPath = typeof mySource === 'string' ? mySource : mySource.name;
+            
+            myStatusElement.textContent = `Loading model from ${mySourceType}: ${myDisplayPath}...`;
+            
+            let myModelSource = mySource; 
+
+            try {
+                if (mySourceType === 'File') {
+                    // Convert File object to ArrayBuffer for robust tflite loading
+                    myModelSource = await new Promise((myResolve, myReject) => {
+                        const myReader = new FileReader();
+                        myReader.onload = () => myResolve(myReader.result);
+                        myReader.onerror = myReject;
+                        myReader.readAsArrayBuffer(mySource);
+                    });
+                    myStatusElement.textContent = `File read into buffer. Loading model from ${myDisplayPath}...`;
+                }
+
+                myTfLiteModel = await tflite.loadTFLiteModel(myModelSource);
+                
+                myStatusElement.textContent = 'Model loaded successfully! Starting webcam...';
+                console.log(`TFLite Model Loaded from ${mySourceType}: ${myDisplayPath}`);
+
+                await mySetupWebcam();
+
+            } catch (myError) {
+                myStatusElement.textContent = `Failed to load model from ${mySourceType}. Check the console (F12) for details.`;
+                console.error('Model loading error:', myError);
+                
+                myDisableControls(false);
+            }
+        }
+
+        /**
+         * @function mySetupWebcam
+         * Initializes the webcam stream.
+         */
+        async function mySetupWebcam() {
+            if (myIsWebcamReady) return;
+
+            try {
+                // Request webcam stream with the input size
+                const myStream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        width: myInputSize,
+                        height: myInputSize,
+                        facingMode: 'user'
+                    },
+                    audio: false
+                });
+
+                myVideoElement.srcObject = myStream;
+                await new Promise(myResolve => myVideoElement.onloadedmetadata = myResolve); 
+
+                myVideoElement.play();
+                myIsWebcamReady = true;
+                myStatusElement.textContent = 'Webcam active. Running classification...';
+                myDisableControls(false); 
+
+                myRunInferenceLoop();
+
+            } catch (myError) {
+                myStatusElement.textContent = `Error accessing webcam: ${myError.message}.`;
+                console.error('Webcam access error:', myError);
+                myDisableControls(false);
+            }
+        }
+
+        /**
+         * @function myRunInferenceLoop
+         * The main loop for frame capture and model inference.
+         */
+        function myRunInferenceLoop() {
+            tf.tidy(() => {
+                if (!myTfLiteModel || !myIsWebcamReady) {
+                    return;
+                }
+
+                // 1. Capture and Preprocess Frame
+                myContext.drawImage(myVideoElement, 0, 0, myInputSize, myInputSize);
+                let myInputTensor = tf.browser.fromPixels(myCanvasElement, myModelConfig.myInputChannels);
+
+                // Normalize and add batch dimension [1, H, W, C]
+                let myNormalizedTensor = myInputTensor
+                    .resizeBilinear([myInputSize, myInputSize])
+                    .cast('float32')
+                    .div(255.0)
+                    .expandDims(0); 
+
+                // 2. Run Inference
+                const myOutputTensor = myTfLiteModel.predict(myNormalizedTensor);
+
+                // 3. Post-processing (Classification-specific)
+                myPostProcessClassification(myOutputTensor);
+            }); 
+
+            myAnimationFrameId = requestAnimationFrame(myRunInferenceLoop);
+        }
+        
+        /**
+         * @function myPostProcessClassification
+         * Interprets the classification output tensor to find the best class.
+         */
+        function myPostProcessClassification(myOutputTensor) {
+            const myPredictionData = myOutputTensor.dataSync();
+            
+            let myMaxProbability = -1;
+            let myMaxClassIndex = -1;
+
+            // Find the class index with the highest probability
+            for (let i = 0; i < myPredictionData.length; i++) {
+                if (myPredictionData[i] > myMaxProbability) {
+                    myMaxProbability = myPredictionData[i];
+                    myMaxClassIndex = i;
+                }
+            }
+
+            let myResultText = 'No prediction above threshold.';
+            
+            // Check if the best prediction meets the confidence threshold
+            if (myMaxProbability >= myModelConfig.myConfidenceThreshold) {
+                const myLabel = myModelConfig.myClassLabels[myMaxClassIndex] || `Class Index ${myMaxClassIndex}`;
+                
+                myResultText = `CLASSIFIED: ${myLabel.toUpperCase()} (${(myMaxProbability * 100).toFixed(1)}%)`;
+                
+                // Console logging the result
+                console.log(
+                    `[CLASSIFICATION] Class: ${myLabel} | Confidence: ${myMaxProbability.toFixed(3)}`
+                );
+            } else {
+                 console.log(`[CLASSIFICATION] Confidence too low: Max ${myMaxProbability.toFixed(3)} < Threshold ${myModelConfig.myConfidenceThreshold}`);
+            }
+            
+            // Update the UI element
+            myPredictionElement.textContent = myResultText;
+
+            // Simple visual feedback on the canvas (optional, but good practice)
+            myContext.fillStyle = 'rgba(0, 0, 0, 0.4)';
+            myContext.fillRect(0, myInputSize - 20, myInputSize, 20);
+            myContext.font = '10px Arial';
+            myContext.fillStyle = 'white';
+            myContext.textAlign = 'center';
+            myContext.fillText(myResultText.split('(')[0].trim(), myInputSize / 2, myInputSize - 5);
+        }
+        
+        /**
+         * @function myResetApplication
+         * Stops webcam, clears model reference, resets status, and re-enables controls.
+         */
+        function myResetApplication() {
+            myStopInferenceLoop();
+            myTfLiteModel = null;
+            
+            if (myContext && myCanvasElement) {
+                myContext.clearRect(0, 0, myInputSize, myInputSize);
+                myContext.fillStyle = '#333'; 
+                myContext.fillRect(0, 0, myInputSize, myInputSize);
+            }
+            
+            myPredictionElement.textContent = 'Waiting for inference...';
+            myStatusElement.textContent = 'Application Reset. Select a model loading method to start.';
+            myDisableControls(false); 
+            console.log('Classification app reset.');
+        }
+
+        /**
+         * @function myStopInferenceLoop
+         * Stops the continuous frame request loop and releases webcam.
+         */
+        function myStopInferenceLoop() {
+            if (myAnimationFrameId) {
+                cancelAnimationFrame(myAnimationFrameId);
+                myAnimationFrameId = null;
+            }
+            if (myVideoElement && myVideoElement.srcObject) {
+                myVideoElement.srcObject.getTracks().forEach(track => track.stop());
+                myVideoElement.srcObject = null;
+            }
+            myIsWebcamReady = false;
+        }
+    </script>
+</body>
+</html>
