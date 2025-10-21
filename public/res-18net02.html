@@ -1,0 +1,349 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LiteRT ResNet Classifier with Webcam</title>
+
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 20px;
+            background-color: #f0f4f8;
+        }
+        #myContainer {
+            max-width: 550px;
+            width: 100%;
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 6px 15px rgba(0, 0, 0, 0.15);
+            margin-bottom: 20px;
+        }
+        #dogs, #myCanvas {
+            border: 3px solid #1a73e8;
+            border-radius: 8px;
+            margin-top: 20px;
+            width: 100%;
+            max-width: 400px;
+            height: auto;
+            display: block;
+            object-fit: contain;
+            margin-bottom: 15px;
+        }
+        #myVideo {
+            display: none; /* Hide the video element */
+        }
+        #dogs {
+            display: block; /* Show static image by default */
+        }
+        #myCanvas {
+            display: none; /* Hide canvas by default */
+        }
+        .myButton {
+            background-color: #1a73e8;
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-top: 10px;
+            width: 100%;
+            box-sizing: border-box;
+            transition: background-color 0.3s, transform 0.1s;
+        }
+        .myButton:hover {
+            background-color: #155cb8;
+        }
+        .myButton:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .myStatus {
+            margin-top: 10px;
+            font-weight: bold;
+            color: #3c4043;
+            text-align: center;
+            padding: 12px;
+            border-radius: 6px;
+            background-color: #e6f7ff;
+            border: 1px solid #90caff;
+        }
+        #results {
+            margin-top: 15px;
+            padding: 10px;
+            border: 1px dashed #0f9d58;
+            border-radius: 6px;
+            background-color: #f4fff8;
+            list-style: none;
+            padding-left: 15px;
+        }
+        .myGrid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+    </style>
+
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.18.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgpu@4.18.0/dist/tf-backend-webgpu.min.js"></script>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@litertjs/core@0.1.0/dist/litert-core.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@litertjs/tfjs-interop@0.1.0/dist/litert-tfjs-interop.min.js"></script>
+
+</head>
+<body>
+
+    <div id="myContainer">
+        <h1 style="text-align: center; color: #3c4043;">LiteRT ResNet Classifier</h1>
+        <p class="myStatus" id="myStatusMessage">Initializing libraries and model...</p>
+
+        <img id="dogs" src="https://storage.googleapis.com/tfjs-models/demos/mobilenet/images/dog_1.jpg" alt="A dog to be classified">
+        
+        <canvas id="myCanvas" width="224" height="224"></canvas>
+
+        <div class="myGrid">
+            <button class="myButton" id="staticButton" onclick="runInference('static')">
+                Classify Static Image 🖼️
+            </button>
+            <button class="myButton" id="webcamButton" onclick="mySetupWebcam()">
+                Start Webcam 📹
+            </button>
+        </div>
+        <button class="myButton" id="stopWebcamButton" onclick="myStopWebcam()" style="background-color: #d93025; display: none;">
+            Stop Webcam
+        </button>
+
+        <ul id="results">
+            <li>Classification results will appear here.</li>
+        </ul>
+    </div>
+
+    <video id="myVideo" playsinline autoplay></video>
+
+    <script>
+        // =================================================================
+        // ⚙️ GLOBAL VARIABLES
+        // =================================================================
+        const MODEL_INPUT_SIZE = 224; // ResNet input size
+        let model = null;
+        let classes = null; 
+        let isWebcamActive = false;
+        let animationFrameId = null;
+        let videoStream = null;
+        let canvasContext = null;
+
+        const TFLITE_MODEL_URL = 'https://storage.googleapis.com/litert/models/resnet18_int8.tflite';
+        const LABELS_URL = 'https://storage.googleapis.com/litert/models/imagenet_classes.json';
+        // This WASM path should be served locally for production
+        const WASM_PATH = 'https://cdn.jsdelivr.net/npm/@litertjs/core@0.1.0/wasm/'; 
+
+        // DOM Elements
+        const statusEl = document.getElementById('myStatusMessage');
+        const staticImgEl = document.getElementById('dogs');
+        const canvasEl = document.getElementById('myCanvas');
+        const videoEl = document.getElementById('myVideo');
+        const classifyBtn = document.getElementById('staticButton');
+        const webcamBtn = document.getElementById('webcamButton');
+        const stopBtn = document.getElementById('stopWebcamButton');
+        const resultsList = document.getElementById('results');
+
+        // =================================================================
+        // 💻 INITIALIZATION LOGIC
+        // =================================================================
+
+        /**
+         * @function setup
+         * Loads all necessary components and prepares the application.
+         */
+        async function setup() {
+            canvasContext = canvasEl.getContext('2d');
+            classifyBtn.disabled = true;
+            webcamBtn.disabled = true;
+
+            try {
+                // 1. Initialize TensorFlow.js WebGPU backend
+                statusEl.textContent = '1/4: Initializing WebGPU...';
+                await tf.setBackend('webgpu');
+                
+                // 2. Load LiteRT.js Wasm files & Sync GPU device
+                statusEl.textContent = '2/4: Loading LiteRT core...';
+                await litert.loadLiteRt(WASM_PATH); 
+                litert.setWebGpuDevice(tf.backend().device);
+                
+                // 3. Load Class Labels (ImageNet)
+                statusEl.textContent = '3/4: Loading class labels...';
+                const labelsResponse = await fetch(LABELS_URL);
+                classes = await labelsResponse.json();
+
+                // 4. Load and Compile LiteRT model
+                statusEl.textContent = '4/4: Loading ResNet18 model...';
+                model = await litert.loadAndCompile(TFLITE_MODEL_URL, { 
+                    accelerator: 'webgpu' 
+                });
+                
+                statusEl.textContent = 'Ready! Choose static image or webcam.';
+                classifyBtn.disabled = false;
+                webcamBtn.disabled = false;
+                
+            } catch (error) {
+                statusEl.textContent = `Error: Initialization failed. Check console (F12) for details.`;
+                console.error("Initialization error:", error);
+            }
+        }
+
+        // =================================================================
+        // 📹 WEBCAM CONTROL LOGIC
+        // =================================================================
+
+        async function mySetupWebcam() {
+            if (isWebcamActive || !model) return;
+
+            statusEl.textContent = 'Requesting camera access...';
+            classifyBtn.disabled = true;
+            webcamBtn.disabled = true;
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        width: MODEL_INPUT_SIZE,
+                        height: MODEL_INPUT_SIZE,
+                        facingMode: 'environment' // Use back camera if available
+                    },
+                    audio: false
+                });
+
+                videoStream = stream;
+                videoEl.srcObject = stream;
+                await new Promise(resolve => videoEl.onloadedmetadata = resolve);
+                videoEl.play();
+                
+                // Switch DOM elements for webcam view
+                staticImgEl.style.display = 'none';
+                canvasEl.style.display = 'block';
+                webcamBtn.style.display = 'none';
+                stopBtn.style.display = 'block';
+
+                isWebcamActive = true;
+                statusEl.textContent = 'Webcam active. Running classification...';
+                myRunInferenceLoop();
+
+            } catch (error) {
+                statusEl.textContent = `Error accessing webcam: ${error.message}.`;
+                webcamBtn.disabled = false;
+                classifyBtn.disabled = false;
+                console.error('Webcam access error:', error);
+            }
+        }
+
+        function myStopWebcam() {
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+                animationFrameId = null;
+            }
+            if (videoStream) {
+                videoStream.getTracks().forEach(track => track.stop());
+                videoStream = null;
+            }
+
+            // Reset DOM elements
+            isWebcamActive = false;
+            staticImgEl.style.display = 'block';
+            canvasEl.style.display = 'none';
+            webcamBtn.style.display = 'block';
+            stopBtn.style.display = 'none';
+            classifyBtn.disabled = false;
+            statusEl.textContent = 'Webcam stopped. Ready for static image classification.';
+            resultsList.innerHTML = '<li>Classification results will appear here.</li>';
+        }
+
+        /**
+         * @function myRunInferenceLoop
+         * The main loop for frame capture and model inference from the webcam.
+         */
+        function myRunInferenceLoop() {
+            if (!isWebcamActive || !model) return;
+            
+            // Draw the video frame to the canvas
+            canvasContext.drawImage(videoEl, 0, 0, MODEL_INPUT_SIZE, MODEL_INPUT_SIZE);
+
+            // Run inference on the canvas image data
+            runInference('webcam');
+            
+            // Schedule the next frame
+            animationFrameId = requestAnimationFrame(myRunInferenceLoop);
+        }
+
+        // =================================================================
+        // 🚀 END-TO-END INFERENCE PIPELINE (Adapted Snippet)
+        // =================================================================
+
+        /**
+         * @function runInference
+         * Executes the classification pipeline on the specified source.
+         * @param {string} source - 'static' for image, 'webcam' for canvas.
+         */
+        async function runInference(source) {
+            if (!model) {
+                statusEl.textContent = 'Error: Model not loaded.';
+                return;
+            }
+            
+            if (source === 'static') {
+                statusEl.textContent = 'Classifying static image...';
+                classifyBtn.disabled = true;
+            }
+            
+            const inputSource = (source === 'static') ? staticImgEl : canvasEl;
+            
+            // 1. Pre-processing and Inference (Your original snippet logic)
+            const top5 = tf.tidy(() => {
+                // Get image data (from <img> or <canvas>) and convert to range [0, 1).
+                const image = tf.browser.fromPixels(inputSource, 3).div(255);
+
+                // Preprocessing matching PyTorch ResNet
+                const imageData = image.resizeBilinear([MODEL_INPUT_SIZE, MODEL_INPUT_SIZE])
+                    .sub([0.485, 0.456, 0.406])
+                    .div([0.229, 0.224, 0.225])
+                    .reshape([1, MODEL_INPUT_SIZE, MODEL_INPUT_SIZE, 3])
+                    .transpose([0, 3, 1, 2]); // NCHW format
+
+                // Run the model using LiteRT interop
+                const probabilities = litert.runWithTfjsTensors(model, imageData)[0];
+
+                // Get the top five classes
+                return tf.topk(probabilities, 5);
+            });
+
+            // 2. Post-processing and Output
+            const values = await top5.values.data();
+            const indices = await top5.indices.data();
+
+            // Clean up the tfjs tensors
+            top5.values.dispose();
+            top5.indices.dispose();
+            
+            // Display results
+            resultsList.innerHTML = ''; 
+            for (let i = 0; i < 5; ++i) {
+                const text = `${classes[indices[i]]}: ${Math.round(values[i] * 100)}%`;
+                const listItem = document.createElement('li');
+                listItem.textContent = text;
+                resultsList.appendChild(listItem);
+            }
+            
+            if (source === 'static') {
+                statusEl.textContent = 'Classification complete!';
+                classifyBtn.disabled = false;
+            }
+        }
+
+        // Start the initialization process when the window loads
+        window.onload = setup;
+    </script>
+</body>
+</html>
