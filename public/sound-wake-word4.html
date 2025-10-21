@@ -1,0 +1,599 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>myWakeWordDetector</title>
+
+    <style>
+        /* General Layout */
+        body { 
+            font-family: Arial, sans-serif; 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            margin: 20px; 
+            background-color: #f0f0f0; 
+        }
+        #myContainer { 
+            max-width: 480px; 
+            width: 100%; 
+            background: white; 
+            padding: 20px; 
+            border-radius: 8px; 
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1); 
+            margin-bottom: 20px;
+        }
+        /* Buttons */
+        .myButton { 
+            background-color: #008080; /* Teal */
+            color: white; 
+            padding: 10px 15px; 
+            border: none; 
+            border-radius: 4px; 
+            cursor: pointer; 
+            font-size: 16px; 
+            margin-top: 10px; 
+            width: 100%; 
+            box-sizing: border-box;
+            transition: background-color 0.3s;
+        }
+        .myButton:hover { 
+            background-color: #006666; 
+        }
+        .myButton:disabled { 
+            background-color: #ccc; 
+            cursor: not-allowed; 
+        }
+        /* Status and Input */
+        .myStatus { 
+            margin-top: 10px; 
+            font-weight: bold; 
+            color: #333; 
+            text-align: center; 
+            padding: 10px; 
+            border-radius: 4px; 
+            background-color: #f0ffff;
+            border: 1px solid #b3cccc;
+        }
+        .myInput { 
+            width: 100%; 
+            padding: 8px; 
+            border: 1px solid #ccc; 
+            border-radius: 4px; 
+            box-sizing: border-box; 
+        }
+        .myGroup { 
+            border: 1px dashed #bbb; 
+            padding: 15px; 
+            border-radius: 4px; 
+            margin-top: 15px; 
+        }
+        #myPredictionResult {
+            text-align: center;
+            font-size: 1.5em;
+            font-weight: bold;
+            margin-top: 15px;
+            min-height: 40px;
+            color: #008080;
+        }
+        #myWaveform {
+            width: 100%;
+            height: 50px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-top: 10px;
+            background-color: #eee;
+        }
+    </style>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@0.0.1-alpha.9/dist/tf-tflite.min.js"></script>
+</head>
+<body>
+
+    <script>
+        // =================================================================
+        // 🚀 USER-CONFIGURABLE MODEL SETTINGS (UPDATED)
+        // =================================================================
+        const myModelConfig = {
+            // Default URL for the wake word model
+            myDefaultUrl: './tflite/ei-ei-v202-xiao-sounds-0unknown-1no-2yes-esp32-nn-classifier-tensorflow-lite-float32-model.12.tflite', 
+            
+            // Expected audio sample rate for the raw recording (1 second)
+            myTargetSampleRate: 16000, 
+            
+            // Raw audio buffer length (1 second of 16kHz audio)
+            myWindowSizeSamples: 16000, 
+            
+            // **New:** The final feature vector size the model expects (the fixed 260 input)
+            myFeatureVectorLength: 260, 
+            
+            // Labels matching the model's output index order
+            myLabels: ['_background_noise_', 'No', 'Yes'], 
+        };
+
+        // =================================================================
+        // ⚙️ INTERNAL VARIABLES 
+        // =================================================================
+        let myTfLiteModel = null;
+        let myAudioContext = null;
+        let myStream = null;
+        let myScriptProcessor = null;
+        let myRawAudioBuffer = []; // Buffer for collecting raw samples (approx 16000)
+        let myFeatureBuffer = []; // Buffer for 260 features
+        let mySamplesCollected = 0;
+        let myRequiredSamples = myModelConfig.myWindowSizeSamples; // Will be adjusted by browser rate
+
+        let myStatusElement = null;
+        let myPredictionElement = null;
+        let myFileInput = null;
+        let myUrlInput = null;
+        let myWaveformCanvas = null;
+        let myWaveformContext = null;
+
+        // =================================================================
+        // 🏠 HTML SETUP (Simple DOM Creation)
+        // =================================================================
+        
+        /**
+         * @function myCreateDOM
+         * Initializes all necessary DOM elements.
+         */
+        function myCreateDOM() {
+            const myContainer = document.createElement('div');
+            myContainer.id = 'myContainer';
+            
+            const myTitle = document.createElement('h1');
+            myTitle.style.fontSize = '1.5em';
+            myTitle.style.fontWeight = 'bold';
+            myTitle.style.marginBottom = '15px';
+            myTitle.style.textAlign = 'center';
+            myTitle.textContent = 'Edge Impulse Wake Word Detector';
+            myContainer.appendChild(myTitle);
+
+            myStatusElement = document.createElement('p');
+            myStatusElement.id = 'myStatusMessage';
+            myStatusElement.className = 'myStatus';
+            myStatusElement.textContent = 'Select a model loading method to start.';
+            myContainer.appendChild(myStatusElement);
+            
+            // Waveform visualizer (minimal)
+            myWaveformCanvas = document.createElement('canvas');
+            myWaveformCanvas.id = 'myWaveform';
+            myWaveformCanvas.width = 440;
+            myWaveformCanvas.height = 50;
+            myContainer.appendChild(myWaveformCanvas);
+            myWaveformContext = myWaveformCanvas.getContext('2d');
+            
+            // --- Controls Group ---
+            const myControlsDiv = document.createElement('div');
+            myControlsDiv.id = 'myControls';
+
+            // 1. Load from File
+            const myFileGroup = document.createElement('div');
+            myFileGroup.className = 'myGroup';
+            myFileGroup.style.borderColor = '#008080';
+            myFileGroup.style.backgroundColor = '#f0faff';
+
+            const myFileLabel = document.createElement('p');
+            myFileLabel.style.fontWeight = 'bold';
+            myFileLabel.textContent = `1. Load From Computer File (.tflite):`;
+            myFileGroup.appendChild(myFileLabel);
+            
+            myFileInput = document.createElement('input'); 
+            myFileInput.type = 'file';
+            myFileInput.id = 'myFileInput';
+            myFileInput.accept = '.tflite';
+            myFileInput.style.marginTop = '10px';
+            myFileInput.onchange = myLoadFromFile; 
+            myFileGroup.appendChild(myFileInput);
+            myControlsDiv.appendChild(myFileGroup);
+
+            // 2. Load from Default URL
+            const myDefaultUrlButton = document.createElement('button');
+            myDefaultUrlButton.className = 'myButton';
+            myDefaultUrlButton.textContent = `2. Load Default URL (${myModelConfig.myDefaultUrl.split('/').pop()})`;
+            myDefaultUrlButton.onclick = myLoadFromDefaultUrl;
+            myControlsDiv.appendChild(myDefaultUrlButton);
+
+            // 3. Load from Custom URL
+            const myUrlGroup = document.createElement('div');
+            myUrlGroup.className = 'myGroup';
+
+            const myUrlLabel = document.createElement('p');
+            myUrlLabel.style.fontWeight = 'bold';
+            myUrlLabel.textContent = '3. Load From Custom URL:';
+            myUrlGroup.appendChild(myUrlLabel);
+
+            myUrlInput = document.createElement('input');
+            myUrlInput.type = 'text';
+            myUrlInput.id = 'myUrlInput';
+            myUrlInput.value = myModelConfig.myDefaultUrl; 
+            myUrlInput.placeholder = 'Enter .tflite URL here';
+            myUrlInput.className = 'myInput';
+            myUrlInput.style.marginTop = '8px';
+            myUrlGroup.appendChild(myUrlInput);
+
+            const myCustomUrlButton = document.createElement('button');
+            myCustomUrlButton.className = 'myButton';
+            myCustomUrlButton.textContent = 'Load Custom URL and Start Microphone';
+            myCustomUrlButton.onclick = myLoadFromCustomUrl;
+            myUrlGroup.appendChild(myCustomUrlButton);
+            
+            myControlsDiv.appendChild(myUrlGroup);
+
+            // 4. Reset Button 
+            const myResetButton = document.createElement('button');
+            myResetButton.className = 'myButton';
+            myResetButton.textContent = 'Reset / Stop Microphone';
+            myResetButton.onclick = myResetApplication;
+            myResetButton.style.marginTop = '25px'; 
+            myControlsDiv.appendChild(myResetButton);
+            
+            myContainer.appendChild(myControlsDiv);
+            document.body.appendChild(myContainer);
+
+            // Prediction Result Display
+            myPredictionElement = document.createElement('p');
+            myPredictionElement.id = 'myPredictionResult';
+            myPredictionElement.textContent = 'Inference not started.';
+            document.body.appendChild(myPredictionElement);
+        }
+        
+        window.onload = myCreateDOM; 
+
+        // =================================================================
+        // 💻 MODEL LOADING AND STARTUP LOGIC
+        // =================================================================
+        
+        /**
+         * @function myGetAllControls
+         * Gets all interactive elements to disable them during loading.
+         */
+        function myGetAllControls() {
+            return [
+                ...document.querySelectorAll('.myButton'),
+                myFileInput,
+                myUrlInput
+            ];
+        }
+
+        /**
+         * @function myDisableControls
+         * Disables control elements during loading.
+         */
+        function myDisableControls(myDisabled) {
+            myGetAllControls().forEach(myEl => myEl.disabled = myDisabled);
+        }
+
+        /**
+         * @function myLoadFromDefaultUrl
+         * Wrapper function to load the model from the configured default URL.
+         */
+        async function myLoadFromDefaultUrl() {
+            await myLoadModelAndStartMic(myModelConfig.myDefaultUrl);
+        }
+
+        /**
+         * @function myLoadFromCustomUrl
+         * Wrapper function to load the model from the text input URL.
+         */
+        async function myLoadFromCustomUrl() {
+            const myCustomUrl = myUrlInput.value.trim();
+            if (myCustomUrl) {
+                await myLoadModelAndStartMic(myCustomUrl);
+            } else {
+                myStatusElement.textContent = 'Error: Please enter a valid URL in the custom URL field.';
+            }
+        }
+
+        /**
+         * @function myLoadFromFile
+         * Handles the change event from the file input to load a local file.
+         */
+        async function myLoadFromFile() {
+            const mySelectedFile = myFileInput.files[0];
+            if (mySelectedFile) {
+                await myLoadModelAndStartMic(mySelectedFile);
+            } else {
+                myDisableControls(false); 
+                myStatusElement.textContent = 'Please select a .tflite file first or choose another method.';
+            }
+        }
+
+        /**
+         * @function myLoadModelAndStartMic
+         * Main function to load the model (File or URL) and start the microphone.
+         * @param {string|File} mySource - The URL string or the File object.
+         */
+        async function myLoadModelAndStartMic(mySource) {
+            myStopAudioProcessing(); 
+            myDisableControls(true);
+
+            const mySourceType = typeof mySource === 'string' ? 'URL' : 'File';
+            const myDisplayPath = typeof mySource === 'string' ? mySource : mySource.name;
+            
+            myStatusElement.textContent = `Loading model from ${mySourceType}: ${myDisplayPath}...`;
+            
+            let myModelSource = mySource; 
+
+            try {
+                if (mySourceType === 'File') {
+                    myModelSource = await new Promise((myResolve, myReject) => {
+                        const myReader = new FileReader();
+                        myReader.onload = () => myResolve(myReader.result);
+                        myReader.onerror = myReject;
+                        myReader.readAsArrayBuffer(mySource);
+                    });
+                    myStatusElement.textContent = `File read into buffer. Loading model...`;
+                }
+
+                myTfLiteModel = await tflite.loadTFLiteModel(myModelSource);
+                
+                myStatusElement.textContent = 'Model loaded successfully! Initializing microphone...';
+                console.log(`TFLite Model Loaded from ${mySourceType}: ${myDisplayPath}`);
+
+                await mySetupMicrophone();
+
+            } catch (myError) {
+                myStatusElement.textContent = `Failed to load model from ${mySourceType}. Check the console (F12) for details.`;
+                console.error('Model loading error:', myError);
+                
+                myDisableControls(false);
+            }
+        }
+
+        // =================================================================
+        // 🎤 MICROPHONE AND AUDIO PROCESSING
+        // =================================================================
+
+        /**
+         * @function mySetupMicrophone
+         * Initializes the Web Audio API and starts mic stream.
+         */
+        async function mySetupMicrophone() {
+            try {
+                // Ensure AudioContext is ready (required for some browsers)
+                if (!myAudioContext) {
+                    myAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                if (myAudioContext.state === 'suspended') {
+                    await myAudioContext.resume();
+                }
+
+                myStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+                const myMicSource = myAudioContext.createMediaStreamSource(myStream);
+                const myBrowserRate = myAudioContext.sampleRate;
+                
+                // ADJUST: Calculate required samples based on browser's actual sample rate
+                // We want 1 second (1000ms) of audio.
+                myRequiredSamples = Math.round(myBrowserRate * 1.0); 
+
+                // Create a ScriptProcessorNode to get raw audio data chunks
+                // Buffer size must be a power of 2 (4096 is standard)
+                myScriptProcessor = myAudioContext.createScriptProcessor(4096, 1, 1); 
+                myScriptProcessor.onaudioprocess = myProcessAudioBuffer;
+
+                // Connect nodes: Mic Source -> Script Processor -> Audio Destination (required to keep it running)
+                myMicSource.connect(myScriptProcessor);
+                myScriptProcessor.connect(myAudioContext.destination);
+
+                myStatusElement.textContent = `Mic active (Browser Rate: ${myBrowserRate}Hz). Collecting ${myRequiredSamples} samples...`;
+                myDisableControls(false); 
+
+            } catch (myError) {
+                myStatusElement.textContent = `Error accessing microphone: ${myError.message}.`;
+                console.error('Microphone access error:', myError);
+                myDisableControls(false);
+            }
+        }
+
+        /**
+         * @function myProcessAudioBuffer
+         * Collects raw audio chunks until the full window is captured.
+         */
+        function myProcessAudioBuffer(myAudioEvent) {
+            // Check if model is loaded and ready
+            if (!myTfLiteModel || myAudioContext.state !== 'running') return;
+
+            const myInputBuffer = myAudioEvent.inputBuffer.getChannelData(0); // Get mono data
+
+            // --- Visualization ---
+            myDrawWaveform(myInputBuffer);
+            
+            // --- Buffering ---
+            let myRemainingSamples = myRequiredSamples - mySamplesCollected;
+            let mySamplesToTake = Math.min(myInputBuffer.length, myRemainingSamples);
+
+            // Add new samples to the main raw audio buffer
+            for (let i = 0; i < mySamplesToTake; i++) {
+                myRawAudioBuffer.push(myInputBuffer[i]);
+            }
+
+            mySamplesCollected += mySamplesToTake;
+
+            // Update status
+            myStatusElement.textContent = `Mic active. Samples collected: ${mySamplesCollected}/${myRequiredSamples}`;
+
+            // Check if we have a full window
+            if (mySamplesCollected >= myRequiredSamples) {
+                // FIXED STEP: Generate the simplified 260 features
+                myFeatureBuffer = myGenerateSimpleFeatures(myRawAudioBuffer);
+                
+                myRunInference();
+                
+                // Clear and reset the raw audio buffer for the next window
+                myRawAudioBuffer = [];
+                mySamplesCollected = 0;
+            }
+        }
+        
+        /**
+         * @function myGenerateSimpleFeatures
+         * Condenses the large raw audio buffer into the required 260 features 
+         * using simple windowed averaging.
+         * @param {Array<number>} myRawBuffer - The collected raw audio data (~16000 samples).
+         * @returns {Float32Array} The condensed 260-feature vector.
+         */
+        function myGenerateSimpleFeatures(myRawBuffer) {
+            const myTargetLength = myModelConfig.myFeatureVectorLength; // 260
+            const myRawLength = myRawBuffer.length; // ~16000
+            
+            // The size of the window to average over (approx 16000/260 = 61.5 samples per feature)
+            const myWindowStep = myRawLength / myTargetLength; 
+            
+            const myFeatureArray = new Float32Array(myTargetLength);
+            
+            for (let i = 0; i < myTargetLength; i++) {
+                let myStart = Math.floor(i * myWindowStep);
+                let myEnd = Math.min(myRawLength, Math.floor((i + 1) * myWindowStep));
+                
+                let mySum = 0;
+                let myCount = 0;
+                
+                // Simple Averaging (Condensing)
+                for (let j = myStart; j < myEnd; j++) {
+                    mySum += myRawBuffer[j];
+                    myCount++;
+                }
+                
+                // Store the average (or 0 if no samples in window)
+                myFeatureArray[i] = myCount > 0 ? mySum / myCount : 0; 
+            }
+            
+            console.log(`Generated feature vector of length ${myFeatureArray.length} from ${myRawLength} raw samples.`);
+            return myFeatureArray;
+        }
+
+        /**
+         * @function myDrawWaveform
+         * Draws the current audio buffer chunk for visual feedback.
+         */
+        function myDrawWaveform(myBuffer) {
+            const myWidth = myWaveformCanvas.width;
+            const myHeight = myWaveformCanvas.height;
+            const myCtx = myWaveformContext;
+
+            myCtx.clearRect(0, 0, myWidth, myHeight);
+            myCtx.fillStyle = '#f0faff';
+            myCtx.fillRect(0, 0, myWidth, myHeight);
+            myCtx.strokeStyle = '#008080';
+            myCtx.lineWidth = 1;
+
+            myCtx.beginPath();
+            const mySliceWidth = myWidth * 1.0 / myBuffer.length;
+            let x = 0;
+
+            for(let i = 0; i < myBuffer.length; i++) {
+                // Normalize the audio data (-1 to 1) to the canvas height
+                const v = myBuffer[i];
+                const y = myHeight / 2 + v * (myHeight / 2);
+
+                if(i === 0) {
+                    myCtx.moveTo(x, y);
+                } else {
+                    myCtx.lineTo(x, y);
+                }
+                x += mySliceWidth;
+            }
+
+            myCtx.lineTo(myWidth, myHeight / 2);
+            myCtx.stroke();
+        }
+
+        /**
+         * @function myRunInference
+         * Runs the TFLite model on the 260-feature vector.
+         */
+        function myRunInference() {
+            tf.tidy(() => {
+                if (!myTfLiteModel) return;
+                
+                // 1. Prepare Input Tensor (using the 260-element feature buffer)
+                const myInputArray = myFeatureBuffer; // Already a Float32Array from myGenerateSimpleFeatures
+                
+                // FIXED RESHAPE: Reshape to [1, 260] 
+                const myInputTensor = tf.tensor(myInputArray).reshape([1, myModelConfig.myFeatureVectorLength]); 
+
+                console.log('Input tensor shape:', myInputTensor.shape);
+
+                // 2. Run Inference
+                const myOutputTensor = myTfLiteModel.predict(myInputTensor);
+
+                // 3. Post-processing (Classification)
+                myPostProcessClassification(myOutputTensor);
+            }); 
+        }
+        
+        /**
+         * @function myPostProcessClassification
+         * Interprets the classification output tensor.
+         */
+        function myPostProcessClassification(myOutputTensor) {
+            const myProbabilities = myOutputTensor.dataSync();
+            const myBestIndex = myProbabilities.indexOf(Math.max(...myProbabilities));
+            const myBestLabel = myModelConfig.myLabels[myBestIndex];
+            const myConfidence = myProbabilities[myBestIndex];
+
+            let myDisplayResult;
+            let myDisplayColor;
+
+            // Simple threshold to emphasize the 'Yes' wake word
+            if (myBestLabel === 'Yes' && myConfidence > 0.75) {
+                myDisplayResult = `WAKE WORD: ${myBestLabel.toUpperCase()} DETECTED! (${(myConfidence * 100).toFixed(1)}%)`;
+                myDisplayColor = '#e53e3e'; // Highlight red for success
+            } else {
+                myDisplayResult = `${myBestLabel} (${(myConfidence * 100).toFixed(1)}%)`;
+                myDisplayColor = '#008080'; // Normal teal
+            }
+            
+            console.log(
+                `Prediction: ${myBestLabel} | Confidence: ${myConfidence.toFixed(4)}`
+            );
+            console.log('All probabilities:', Array.from(myProbabilities).map((p, i) => `${myModelConfig.myLabels[i]}: ${(p*100).toFixed(1)}%`).join(', '));
+            
+            myPredictionElement.textContent = myDisplayResult;
+            myPredictionElement.style.color = myDisplayColor;
+        }
+        
+        /**
+         * @function myResetApplication
+         * Stops audio processing, clears model reference, resets status, and re-enables controls.
+         */
+        function myResetApplication() {
+            myStopAudioProcessing();
+            myTfLiteModel = null;
+            
+            myPredictionElement.textContent = 'Inference not started.';
+            myPredictionElement.style.color = '#008080';
+            myStatusElement.textContent = 'Application Reset. Select a model loading method to start.';
+            myDisableControls(false); 
+            console.log('Wake Word Detection app reset.');
+        }
+
+        /**
+         * @function myStopAudioProcessing
+         * Stops the microphone stream and releases resources.
+         */
+        function myStopAudioProcessing() {
+            if (myStream) {
+                myStream.getTracks().forEach(track => track.stop());
+                myStream = null;
+            }
+            if (myAudioContext && myAudioContext.state !== 'closed') {
+                myAudioContext.close();
+                myAudioContext = null;
+            }
+            // Clear buffers
+            myRawAudioBuffer = [];
+            myFeatureBuffer = [];
+            mySamplesCollected = 0;
+            // Clear the visualization
+            if (myWaveformContext && myWaveformCanvas) {
+                myWaveformContext.clearRect(0, 0, myWaveformCanvas.width, myWaveformCanvas.height);
+            }
+        }
+    </script>
+</body>
+</html>
