@@ -1,0 +1,417 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>myMotionDetector</title>
+    <style>
+        body { 
+            font-family: Arial, sans-serif; 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            margin: 20px; 
+            background-color: #f0f0f0; 
+        }
+        #myContainer { 
+            max-width: 480px; 
+            width: 100%; 
+            background: white; 
+            padding: 20px; 
+            border-radius: 8px; 
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1); 
+            margin-bottom: 20px;
+        }
+        /* Buttons */
+        .myButton { 
+            background-color: #6a0dad; /* Purple for Motion */
+            color: white; 
+            padding: 12px 15px; 
+            border: none; 
+            border-radius: 6px; 
+            cursor: pointer; 
+            font-size: 16px; 
+            margin-top: 10px; 
+            width: 100%; 
+            box-sizing: border-box;
+            transition: background-color 0.3s;
+        }
+        .myButton:hover { 
+            background-color: #580a91; 
+        }
+        .myButton:disabled { 
+            background-color: #ccc; 
+            cursor: not-allowed; 
+        }
+        /* Status and Input */
+        .myStatus { 
+            margin-top: 15px; 
+            font-weight: bold; 
+            color: #333; 
+            text-align: center; 
+            padding: 10px; 
+            border-radius: 4px; 
+            background-color: #f7f0ff;
+            border: 1px solid #d4bfff;
+        }
+        .myInput { 
+            width: 100%; 
+            padding: 8px; 
+            border: 1px solid #ccc; 
+            border-radius: 4px; 
+            box-sizing: border-box; 
+        }
+        .myGroup { 
+            border: 1px dashed #bbb; 
+            padding: 15px; 
+            border-radius: 4px; 
+            margin-top: 15px; 
+        }
+        #myCurrentData {
+            font-size: 0.9em;
+            color: #666;
+            margin-top: 10px;
+            text-align: left;
+        }
+        /* Styling for the dedicated output div (myDiv01) */
+        #myDiv01 {
+            text-align: center;
+            font-size: 1.8em;
+            font-weight: bold;
+            margin-top: 25px;
+            min-height: 50px;
+            color: #6a0dad;
+        }
+        /* New styling for history area */
+        #myHistory {
+            margin-top: 20px;
+            padding: 10px 15px;
+            border: 1px solid #ddd;
+            background-color: #fff;
+            border-radius: 4px;
+            width: 100%;
+            max-width: 480px;
+            box-sizing: border-box;
+        }
+        #myHistory h2 {
+            font-size: 1em;
+            margin-top: 0;
+            margin-bottom: 5px;
+            color: #333;
+        }
+        #myDetectedLabels {
+            font-size: 1.4em;
+            font-weight: bold;
+            word-break: break-all;
+            color: #000;
+        }
+        /* NEW: Styling for available labels */
+        #myAvailableLabels {
+            font-size: 0.9em;
+            color: #6a0dad;
+            margin-top: 5px;
+            text-align: center;
+        }
+    </style>
+        <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@0.0.1-alpha.9/dist/tf-tflite.min.js"></script>
+</head>
+<body>
+    <div id="myContainer">
+        <h1 style="font-size: 1.5em; font-weight: bold; margin-bottom: 15px; text-align: center;">Mobile Motion Detector</h1>
+                <p id="myStatusMessage" class="myStatus">Load a model to check device motion capabilities.</p>
+        <div id="myCurrentData">Waiting for sensor data...</div>
+                
+        <div id="myAvailableLabels"></div>
+
+        <div id="myControls">
+                        <button class="myButton" onclick="myLoadFromDefaultUrl()">1. Load Default Model</button>
+            <div class="myGroup">
+                <p style="font-weight: bold;">2. Load From Custom URL:</p>
+                <input type="text" id="myUrlInput" class="myInput" placeholder="Enter .tflite URL here" style="margin-top: 8px;">
+                <button class="myButton" onclick="myLoadFromCustomUrl()">Load Custom URL and Start Motion Detection</button>
+            </div>
+            <button class="myButton" onclick="myResetApplication()" style="margin-top: 25px;">Reset / Stop Motion Sensing</button>
+                    </div>
+    </div>
+    
+    <div id="myDiv01">Detection not active.</div>
+    
+    <div id="myHistory">
+        <h2>Detected Sequence:</h2>
+        <div id="myDetectedLabels">---</div>
+    </div>
+    
+    <script>
+        // =================================================================
+        // 🚀 USER-CONFIGURABLE MODEL SETTINGS (UPDATED FOR 1x33 INPUT)
+        // =================================================================
+        const myModelConfig = {
+            // Default URL pointing to the user-specified local repository path
+            myDefaultUrl: './tflite/ei-w7-8-esp32-accel-words-both-better-nn-classifier-tensorflow-lite-float32-model.38.tflite', 
+                         // Expected length of the motion window: 11 samples (33 values / 3 features)
+            myWindowLength: 11, 
+                         // Expected features (X, Y, Z for accelerometer)
+            myFeatureCount: 3, 
+            // Labels matching the model's 9 outputs: D, O, R, S, W, erase, space, still, unknown
+            myLabels: ['D', 'O', 'R', 'S', 'W', 'erase', 'space', 'still', 'unknown'], 
+        };
+        // =================================================================
+        // ⚙️ INTERNAL VARIABLES 
+        // =================================================================
+        let myTfLiteModel = null;
+        let mySensorBuffer = []; // Buffer to collect [X, Y, Z] tuples
+        let myIsCapturing = false;
+        let myStatusElement = null;
+        let myPredictionElement = null; // References myDiv01
+        let myDataDisplayElement = null;
+        let myUrlInput = null;
+        
+        // History tracking variables
+        let myHistoryElement = null; // References myDetectedLabels div
+        let myDetectedLabels = []; // Array to store the sequence of detected, non-unknown labels
+
+        // NEW: Labels display element
+        let myAvailableLabelsElement = null;
+
+        // =================================================================
+        // 🏠 HTML SETUP (Simple DOM Creation)
+        // =================================================================
+                
+        /**
+         * @function myCreateDOM
+         * Initializes all necessary DOM element references.
+         */
+        function myCreateDOM() {
+            // Get references to existing static elements
+            myStatusElement = document.getElementById('myStatusMessage');
+            myDataDisplayElement = document.getElementById('myCurrentData');
+            myUrlInput = document.getElementById('myUrlInput');
+                        
+            // Get reference to the dedicated output myDiv01
+            myPredictionElement = document.getElementById('myDiv01'); 
+            myPredictionElement.textContent = 'Detection not active.';
+            
+            // Get reference to the history display div
+            myHistoryElement = document.getElementById('myDetectedLabels');
+            myHistoryElement.textContent = '---';
+
+            // NEW: Get reference to the labels display div and populate it
+            myAvailableLabelsElement = document.getElementById('myAvailableLabels');
+            myAvailableLabelsElement.innerHTML = `**Available Gestures:** ${myModelConfig.myLabels.join(', ').toUpperCase()}`;
+
+            // Set initial URL value
+            myUrlInput.value = myModelConfig.myDefaultUrl;
+        }
+                
+        // Call the setup function when the window loads
+        window.onload = myCreateDOM; 
+         // =================================================================
+        // 💻 MODEL LOADING AND STARTUP LOGIC
+        // =================================================================
+                
+        /**
+         * @function myDisableControls
+         * Disables control elements during loading.
+         */
+        function myDisableControls(myDisabled) {
+            document.querySelectorAll('.myButton, .myInput').forEach(myEl => myEl.disabled = myDisabled);
+        }
+        /**
+         * @function myLoadFromDefaultUrl
+         * Wrapper function to load the model from the configured default URL.
+         */
+        async function myLoadFromDefaultUrl() {
+            await myLoadModelAndStartSensors(myModelConfig.myDefaultUrl);
+        }
+        /**
+         * @function myLoadFromCustomUrl
+         * Wrapper function to load the model from the text input URL.
+         */
+        async function myLoadFromCustomUrl() {
+            const myCustomUrl = myUrlInput.value.trim();
+            if (myCustomUrl) {
+                await myLoadModelAndStartSensors(myCustomUrl);
+            } else {
+                myStatusElement.textContent = 'Error: Please enter a valid URL in the custom URL field.';
+            }
+        }
+        /**
+         * @function myLoadModelAndStartSensors
+         * Main function to load the model and start motion sensing.
+         * @param {string} myUrl - The TFLite model URL.
+         */
+        async function myLoadModelAndStartSensors(myUrl) {
+            myStopMotionSensing(); 
+            myDisableControls(true);
+                        
+            myStatusElement.textContent = `Loading model from URL: ${myUrl.split('/').pop()}...`;
+                        
+            try {
+                // Check for motion sensor capability first
+                if (!window.DeviceMotionEvent) {
+                    throw new Error('DeviceMotionEvent not supported on this device or browser.');
+                }
+                // 1. Load Model
+                myTfLiteModel = await tflite.loadTFLiteModel(myUrl);
+                                
+                myStatusElement.textContent = 'Model loaded successfully! Starting motion capture...';
+                console.log(`TFLite Motion Model Loaded from: ${myUrl}`);
+                // 2. Request Permissions (iOS 13+ requires this)
+                // Note: The permission API might not exist or might require a user interaction (button press)
+                if (typeof DeviceOrientationEvent.requestPermission === 'function') {
+                    const permission = await DeviceOrientationEvent.requestPermission();
+                    if (permission !== 'granted') {
+                        throw new Error('Motion sensor permission denied by user.');
+                    }
+                }
+                                
+                // 3. Start Sensing
+                myStartMotionSensing();
+                myDisableControls(false); 
+            } catch (myError) {
+                myStatusElement.textContent = `Error: ${myError.message}. Motion detection cannot start.`;
+                console.error('Model or Sensor error:', myError);
+                myDisableControls(false);
+            }
+        }
+        // =================================================================
+        // 📱 MOTION SENSING AND INFERENCE LOOP
+        // =================================================================
+                
+        /**
+         * @function myStartMotionSensing
+         * Adds the event listener to start capturing device motion data.
+         */
+        function myStartMotionSensing() {
+            if (myIsCapturing) return;
+            window.addEventListener('devicemotion', myHandleMotion);
+            myIsCapturing = true;
+            myStatusElement.textContent = `Capturing motion (0/${myModelConfig.myWindowLength} samples collected). Move your device!`;
+            myPredictionElement.textContent = 'Collecting data...';
+            // Clear history when starting
+            myDetectedLabels = []; 
+            myHistoryElement.textContent = '---';
+        }
+        /**
+         * @function myHandleMotion
+         * Processes incoming sensor data and buffers it for inference.
+         * @param {DeviceMotionEvent} myEvent - The device motion event object.
+         */
+        function myHandleMotion(myEvent) {
+            if (!myTfLiteModel) return;
+            const myAcceleration = myEvent.accelerationIncludingGravity;
+                        
+            if (!myAcceleration || myAcceleration.x === null) {
+                // Sensor data is unavailable or permission was not granted
+                myStatusElement.textContent = 'Sensor data unavailable. Ensure permissions are granted and device supports acceleration data.';
+                return;
+            }
+            // Extract G-force data for X, Y, Z
+            const myX = myAcceleration.x || 0;
+            const myY = myAcceleration.y || 0;
+            const myZ = myAcceleration.z || 0;
+            // Push the [X, Y, Z] feature vector to the buffer
+            mySensorBuffer.push(myX, myY, myZ);
+            // Update UI with current values
+            myDataDisplayElement.innerHTML = 
+                `**Current Sensor Reading:**<br>` +
+                `X: ${myX.toFixed(3)} G | Y: ${myY.toFixed(3)} G | Z: ${myZ.toFixed(3)} G` +
+                `<br>Buffer: ${mySensorBuffer.length / myModelConfig.myFeatureCount}/${myModelConfig.myWindowLength} samples`;
+            // Check if buffer is full (11 samples * 3 features = 33 values)
+            if (mySensorBuffer.length >= myModelConfig.myWindowLength * myModelConfig.myFeatureCount) {
+                myRunInference();
+                // Reset buffer for the next window
+                mySensorBuffer = []; 
+                myStatusElement.textContent = `Capturing motion (0/${myModelConfig.myWindowLength} samples collected). Move your device!`;
+            }
+        }
+        /**
+         * @function myRunInference
+         * Runs the TFLite model on the collected time series data.
+         */
+        function myRunInference() {
+            tf.tidy(() => {
+                // 1. Prepare Input Tensor - shape [1, 33]
+                const myInputArray = new Float32Array(mySensorBuffer);
+                // Reshape to [1, 33] to match model input
+                const myInputTensor = tf.tensor(myInputArray).reshape([1, 33]);
+                console.log('Input tensor shape:', myInputTensor.shape);
+                console.log('Input data sample:', myInputArray.slice(0, 9)); // First 3 samples
+                // 2. Run Inference
+                const myOutputTensor = myTfLiteModel.predict(myInputTensor);
+                // 3. Post-processing (Classification)
+                myPostProcessClassification(myOutputTensor);
+            }); 
+        }
+                
+        /**
+         * @function myPostProcessClassification
+         * Interprets the classification output tensor and displays the result in myDiv01 and history.
+         */
+        function myPostProcessClassification(myOutputTensor) {
+            const myProbabilities = myOutputTensor.dataSync();
+            const myBestIndex = myProbabilities.indexOf(Math.max(...myProbabilities));
+            const myBestLabel = myModelConfig.myLabels[myBestIndex];
+            const myConfidence = myProbabilities[myBestIndex];
+            let myDisplayResult = `${myBestLabel.toUpperCase()} detected! (${(myConfidence * 100).toFixed(1)}%)`;
+                        
+            // Console output for debugging
+            console.log(
+                `Motion Detected: ${myBestLabel} | Confidence: ${myConfidence.toFixed(4)}`
+            );
+            console.log('All probabilities:', Array.from(myProbabilities).map((p, i) => `${myModelConfig.myLabels[i]}: ${(p*100).toFixed(1)}%`).join(', '));
+                        
+            // Output to the dedicated div (myDiv01)
+            myPredictionElement.textContent = myDisplayResult;
+            myPredictionElement.style.color = (myConfidence > 0.7) ? '#6a0dad' : '#999';
+            
+            // LOGIC: Record and display non-unknown labels
+            if (myBestLabel !== 'unknown') {
+                // Only record the label if confidence is reasonable (optional, but good practice)
+                if (myConfidence > 0.5) { // You can adjust this threshold
+                     // Use the uppercase version for display clarity
+                    myDetectedLabels.push(myBestLabel.toUpperCase()); 
+                }
+            }
+            
+            // Update the history display
+            if (myDetectedLabels.length > 0) {
+                 // Join the array into a comma-separated string
+                myHistoryElement.textContent = myDetectedLabels.join(', '); 
+            } else {
+                myHistoryElement.textContent = '---';
+            }
+        }
+                
+        /**
+         * @function myResetApplication
+         * Stops motion sensing and resets the application state.
+         */
+        function myResetApplication() {
+            myStopMotionSensing();
+            myTfLiteModel = null;
+            
+            // Reset history variables
+            myDetectedLabels = [];
+            if (myHistoryElement) myHistoryElement.textContent = '---';
+                        
+            myPredictionElement.textContent = 'Detection not active.';
+            myPredictionElement.style.color = '#6a0dad';
+            myStatusElement.textContent = 'Application Reset. Load model and start sensing.';
+            myDataDisplayElement.textContent = 'Waiting for sensor data...';
+            myDisableControls(false); 
+            console.log('Motion Detector app reset.');
+        }
+        /**
+         * @function myStopMotionSensing
+         * Removes the event listener to stop capturing device motion data.
+         */
+        function myStopMotionSensing() {
+            window.removeEventListener('devicemotion', myHandleMotion);
+            myIsCapturing = false;
+            mySensorBuffer = [];
+        }
+    </script>
+</body>
+</html>
