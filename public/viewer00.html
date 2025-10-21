@@ -144,7 +144,7 @@
             <div id="model-status" class="status status-info">Awaiting model file or URL...</div>
 
             <label for="model-file">Load from Local File (.tflite)</label>
-            <input type="file" id="model-file" accept=".tflite">
+            <input type="file" id="model-file" accept=".tflite,.lite">
 
             <p class="divider">— OR —</p>
 
@@ -532,6 +532,14 @@
 
             if (selectedFile) {
                 updateStatus(`Reading file: ${selectedFile.name}...`, 'info');
+                
+                // Check file extension and warn if .lite instead of .tflite
+                const fileName = selectedFile.name.toLowerCase();
+                if (fileName.endsWith('.lite')) {
+                    console.warn('File has .lite extension. Standard extension is .tflite');
+                    updateStatus(`⚠️ Warning: File has .lite extension (standard is .tflite). Attempting to load anyway...`, 'info');
+                }
+                
                 try {
                     modelSource = await readFileAsArrayBuffer(selectedFile);
                     modelUrlEl.value = ''; 
