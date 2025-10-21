@@ -1,0 +1,442 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>myWakeWordDetector</title>
+
+    <style>
+        /* General Layout */
+        body { 
+            font-family: Arial, sans-serif; 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            margin: 20px; 
+            background-color: #f0f0f0; 
+        }
+        #myContainer { 
+            max-width: 480px; 
+            width: 100%; 
+            background: white; 
+            padding: 20px; 
+            border-radius: 8px; 
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1); 
+            margin-bottom: 20px;
+        }
+        /* Buttons */
+        .myButton { 
+            background-color: #008080; /* Teal */
+            color: white; 
+            padding: 10px 15px; 
+            border: none; 
+            border-radius: 4px; 
+            cursor: pointer; 
+            font-size: 16px; 
+            margin-top: 10px; 
+            width: 100%; 
+            box-sizing: border-box;
+            transition: background-color 0.3s;
+        }
+        .myButton:hover { 
+            background-color: #006666; 
+        }
+        .myButton:disabled { 
+            background-color: #ccc; 
+            cursor: not-allowed; 
+        }
+        /* Status and Input */
+        .myStatus { 
+            margin-top: 10px; 
+            font-weight: bold; 
+            color: #333; 
+            text-align: center; 
+            padding: 10px; 
+            border-radius: 4px; 
+            background-color: #f0ffff;
+            border: 1px solid #b3cccc;
+        }
+        .myInput { 
+            width: 100%; 
+            padding: 8px; 
+            border: 1px solid #ccc; 
+            border-radius: 4px; 
+            box-sizing: border-box; 
+        }
+        .myGroup { 
+            border: 1px dashed #bbb; 
+            padding: 15px; 
+            border-radius: 4px; 
+            margin-top: 15px; 
+        }
+        #myPredictionResult {
+            text-align: center;
+            font-size: 1.5em;
+            font-weight: bold;
+            margin-top: 15px;
+            min-height: 40px;
+            color: #008080;
+        }
+        /* REPURPOSED: Status for Data Input Type */
+        #myWaveform { 
+            width: 100%;
+            height: auto; /* Changed from 50px */
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-top: 10px;
+            background-color: #f0faff;
+            padding: 10px;
+            text-align: center;
+        }
+    </style>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@0.0.1-alpha.9/dist/tf-tflite.min.js"></script>
+</head>
+<body>
+
+    <script>
+        // =================================================================
+        // 🚀 USER-CONFIGURABLE MODEL SETTINGS (ADJUSTED FOR 1x260 FEATURE VECTOR)
+        // =================================================================
+        const myModelConfig = {
+            // Default URL for the wake word model
+            myDefaultUrl: './tflite/ei-ei-v202-xiao-sounds-0unknown-1no-2no-2yes-esp32-nn-classifier-tensorflow-lite-float32-model.12.tflite', 
+            
+            // This is the number of features (e.g., MFCCs) the model expects
+            myFeatureVectorLength: 260, 
+            
+            // Labels matching the model's output index order
+            myLabels: ['_background_noise_', 'No', 'Yes'], 
+        };
+
+        // =================================================================
+        // ⚙️ INTERNAL VARIABLES 
+        // =================================================================
+        let myTfLiteModel = null;
+        let myIsActive = false; // Flag to control the simulation loop
+        let myIntervalHandle = null; // Handle for the timer
+
+        let myStatusElement = null;
+        let myPredictionElement = null;
+        let myFileInput = null;
+        let myUrlInput = null;
+        let myDataStatusElement = null; // References #myWaveform
+
+        // =================================================================
+        // 🏠 HTML SETUP (Simple DOM Creation)
+        // =================================================================
+                
+        /**
+         * @function myCreateDOM
+         * Initializes all necessary DOM elements.
+         */
+        function myCreateDOM() {
+            const myContainer = document.createElement('div');
+            myContainer.id = 'myContainer';
+            
+            const myTitle = document.createElement('h1');
+            myTitle.style.fontSize = '1.5em';
+            myTitle.style.fontWeight = 'bold';
+            myTitle.style.marginBottom = '15px';
+            myTitle.style.textAlign = 'center';
+            myTitle.textContent = 'Edge Impulse Wake Word Detector';
+            myContainer.appendChild(myTitle);
+
+            myStatusElement = document.createElement('p');
+            myStatusElement.id = 'myStatusMessage';
+            myStatusElement.className = 'myStatus';
+            myStatusElement.textContent = 'Select a model loading method to start.';
+            myContainer.appendChild(myStatusElement);
+            
+            // Data Status REPURPOSED from Waveform
+            myDataStatusElement = document.createElement('div');
+            myDataStatusElement.id = 'myWaveform';
+            myDataStatusElement.innerHTML = 'Microphone cannot generate the required 260-feature vector in-browser. Running **simulated inference**...';
+            myContainer.appendChild(myDataStatusElement);
+            
+            // --- Controls Group ---
+            const myControlsDiv = document.createElement('div');
+            myControlsDiv.id = 'myControls';
+
+            // 1. Load from File (No changes)
+            const myFileGroup = document.createElement('div');
+            myFileGroup.className = 'myGroup';
+            myFileGroup.style.borderColor = '#008080';
+            myFileGroup.style.backgroundColor = '#f0faff';
+
+            const myFileLabel = document.createElement('p');
+            myFileLabel.style.fontWeight = 'bold';
+            myFileLabel.textContent = `1. Load From Computer File (.tflite):`;
+            myFileGroup.appendChild(myFileLabel);
+            
+            myFileInput = document.createElement('input'); 
+            myFileInput.type = 'file';
+            myFileInput.id = 'myFileInput';
+            myFileInput.accept = '.tflite';
+            myFileInput.style.marginTop = '10px';
+            myFileInput.onchange = myLoadFromFile; 
+            myFileGroup.appendChild(myFileInput);
+            myControlsDiv.appendChild(myFileGroup);
+
+            // 2. Load from Default URL (No changes)
+            const myDefaultUrlButton = document.createElement('button');
+            myDefaultUrlButton.className = 'myButton';
+            myDefaultUrlButton.textContent = `2. Load Default URL (${myModelConfig.myDefaultUrl.split('/').pop()})`;
+            myDefaultUrlButton.onclick = myLoadFromDefaultUrl;
+            myControlsDiv.appendChild(myDefaultUrlButton);
+
+            // 3. Load from Custom URL (No changes)
+            const myUrlGroup = document.createElement('div');
+            myUrlGroup.className = 'myGroup';
+
+            const myUrlLabel = document.createElement('p');
+            myUrlLabel.style.fontWeight = 'bold';
+            myUrlLabel.textContent = '3. Load From Custom URL:';
+            myUrlGroup.appendChild(myUrlLabel);
+
+            myUrlInput = document.createElement('input');
+            myUrlInput.type = 'text';
+            myUrlInput.id = 'myUrlInput';
+            myUrlInput.value = myModelConfig.myDefaultUrl; 
+            myUrlInput.placeholder = 'Enter .tflite URL here';
+            myUrlInput.className = 'myInput';
+            myUrlInput.style.marginTop = '8px';
+            myUrlGroup.appendChild(myUrlInput);
+
+            const myCustomUrlButton = document.createElement('button');
+            myCustomUrlButton.className = 'myButton';
+            myCustomUrlButton.textContent = 'Load Custom URL and Start Simulation'; // Updated text
+            myCustomUrlButton.onclick = myLoadFromCustomUrl;
+            myUrlGroup.appendChild(myCustomUrlButton);
+            
+            myControlsDiv.appendChild(myUrlGroup);
+
+            // 4. Reset Button (No changes)
+            const myResetButton = document.createElement('button');
+            myResetButton.className = 'myButton';
+            myResetButton.textContent = 'Reset / Stop Simulation'; // Updated text
+            myResetButton.onclick = myResetApplication;
+            myResetButton.style.marginTop = '25px'; 
+            myControlsDiv.appendChild(myResetButton);
+            
+            myContainer.appendChild(myControlsDiv);
+            document.body.appendChild(myContainer);
+
+            // Prediction Result Display (No changes)
+            myPredictionElement = document.createElement('p');
+            myPredictionElement.id = 'myPredictionResult';
+            myPredictionElement.textContent = 'Inference not started.';
+            document.body.appendChild(myPredictionElement);
+        }
+        
+        window.onload = myCreateDOM; 
+
+        // =================================================================
+        // 💻 MODEL LOADING AND STARTUP LOGIC
+        // =================================================================
+        
+        /**
+         * @function myGetAllControls
+         * Gets all interactive elements to disable them during loading.
+         */
+        function myGetAllControls() {
+            return [
+                ...document.querySelectorAll('.myButton'),
+                myFileInput,
+                myUrlInput
+            ];
+        }
+
+        /**
+         * @function myDisableControls
+         * Disables control elements during loading.
+         */
+        function myDisableControls(myDisabled) {
+            myGetAllControls().forEach(myEl => myEl.disabled = myDisabled);
+        }
+
+        /**
+         * @function myLoadFromDefaultUrl
+         * Wrapper function to load the model from the configured default URL.
+         */
+        async function myLoadFromDefaultUrl() {
+            await myLoadModelAndStartSimulation(myModelConfig.myDefaultUrl);
+        }
+
+        /**
+         * @function myLoadFromCustomUrl
+         * Wrapper function to load the model from the text input URL.
+         */
+        async function myLoadFromCustomUrl() {
+            const myCustomUrl = myUrlInput.value.trim();
+            if (myCustomUrl) {
+                await myLoadModelAndStartSimulation(myCustomUrl);
+            } else {
+                myStatusElement.textContent = 'Error: Please enter a valid URL in the custom URL field.';
+            }
+        }
+
+        /**
+         * @function myLoadFromFile
+         * Handles the change event from the file input to load a local file.
+         */
+        async function myLoadFromFile() {
+            const mySelectedFile = myFileInput.files[0];
+            if (mySelectedFile) {
+                await myLoadModelAndStartSimulation(mySelectedFile);
+            } else {
+                myDisableControls(false); 
+                myStatusElement.textContent = 'Please select a .tflite file first or choose another method.';
+            }
+        }
+
+        /**
+         * @function myLoadModelAndStartSimulation
+         * Main function to load the model (File or URL) and start the simulation.
+         * @param {string|File} mySource - The URL string or the File object.
+         */
+        async function myLoadModelAndStartSimulation(mySource) {
+            myStopSimulation(); 
+            myDisableControls(true);
+
+            const mySourceType = typeof mySource === 'string' ? 'URL' : 'File';
+            const myDisplayPath = typeof mySource === 'string' ? mySource : mySource.name;
+            
+            myStatusElement.textContent = `Loading model from ${mySourceType}: ${myDisplayPath}...`;
+            
+            let myModelSource = mySource; 
+
+            try {
+                if (mySourceType === 'File') {
+                    myModelSource = await new Promise((myResolve, myReject) => {
+                        const myReader = new FileReader();
+                        myReader.onload = () => myResolve(myReader.result);
+                        myReader.onerror = myReject;
+                        myReader.readAsArrayBuffer(mySource);
+                    });
+                    myStatusElement.textContent = `File read into buffer. Loading model...`;
+                }
+
+                myTfLiteModel = await tflite.loadTFLiteModel(myModelSource);
+                
+                myStatusElement.textContent = 'Model loaded successfully! Starting simulation...';
+                console.log(`TFLite Model Loaded from ${mySourceType}: ${myDisplayPath}`);
+
+                myStartSimulation(); // Start the inference loop
+                myDisableControls(false); 
+
+            } catch (myError) {
+                myStatusElement.textContent = `Failed to load model from ${mySourceType}. Check the console (F12) for details.`;
+                console.error('Model loading error:', myError);
+                
+                myDisableControls(false);
+            }
+        }
+
+        // =================================================================
+        // 🧪 SIMULATED INFERENCE LOOP (REPLACES MIC CODE)
+        // =================================================================
+
+        /**
+         * @function myStartSimulation
+         * Starts the continuous loop to generate dummy data and run inference.
+         */
+        function myStartSimulation() {
+            if (myIsActive) return;
+            myIsActive = true;
+            myStatusElement.textContent = `Simulation active. Running inference every 1 second.`;
+            
+            // Run inference immediately, then every 1000ms (1 second)
+            myRunInference(); 
+            myIntervalHandle = setInterval(myRunInference, 1000); 
+        }
+
+        /**
+         * @function myStopSimulation
+         * Stops the continuous simulation loop.
+         */
+        function myStopSimulation() {
+            if (myIntervalHandle) {
+                clearInterval(myIntervalHandle);
+                myIntervalHandle = null;
+            }
+            myIsActive = false;
+        }
+        
+        /**
+         * @function myRunInference
+         * Runs the TFLite model on a randomly generated 260-feature vector.
+         */
+        function myRunInference() {
+            tf.tidy(() => {
+                if (!myTfLiteModel) return;
+
+                // 1. Generate Input Tensor (SIMULATED DATA)
+                // Create a Float32Array of length 260 with random values between -1 and 1
+                const myInputArray = new Float32Array(myModelConfig.myFeatureVectorLength).map(
+                    () => (Math.random() * 2) - 1
+                );
+                
+                // FIXED RESHAPE: Reshape to [1, 260]
+                const myInputTensor = tf.tensor(myInputArray).reshape([1, myModelConfig.myFeatureVectorLength]); 
+
+                console.log('Input tensor shape:', myInputTensor.shape);
+                // console.log('Input data sample:', myInputArray.slice(0, 10)); // Uncomment for data inspection
+
+                // 2. Run Inference
+                const myOutputTensor = myTfLiteModel.predict(myInputTensor);
+
+                // 3. Post-processing (Classification)
+                myPostProcessClassification(myOutputTensor);
+            }); 
+        }
+        
+        /**
+         * @function myPostProcessClassification
+         * Interprets the classification output tensor.
+         */
+        function myPostProcessClassification(myOutputTensor) {
+            const myProbabilities = myOutputTensor.dataSync();
+            const myBestIndex = myProbabilities.indexOf(Math.max(...myProbabilities));
+            const myBestLabel = myModelConfig.myLabels[myBestIndex];
+            const myConfidence = myProbabilities[myBestIndex];
+
+            let myDisplayResult;
+            let myDisplayColor;
+
+            // Assuming 'Yes' is the wake word for emphasis
+            if (myBestLabel === 'Yes' && myConfidence > 0.75) {
+                myDisplayResult = `WAKE WORD: ${myBestLabel.toUpperCase()} DETECTED! (${(myConfidence * 100).toFixed(1)}%)`;
+                myDisplayColor = '#e53e3e'; // Highlight red for success
+            } else {
+                myDisplayResult = `${myBestLabel} (${(myConfidence * 100).toFixed(1)}%)`;
+                myDisplayColor = '#008080'; // Normal teal
+            }
+            
+            console.log(
+                `Prediction: ${myBestLabel} | Confidence: ${myConfidence.toFixed(4)}`
+            );
+            console.log('All probabilities:', Array.from(myProbabilities).map((p, i) => `${myModelConfig.myLabels[i]}: ${(p*100).toFixed(1)}%`).join(', '));
+            
+            myPredictionElement.textContent = myDisplayResult;
+            myPredictionElement.style.color = myDisplayColor;
+        }
+        
+        /**
+         * @function myResetApplication
+         * Stops simulation, clears model reference, resets status, and re-enables controls.
+         */
+        function myResetApplication() {
+            myStopSimulation();
+            myTfLiteModel = null;
+            
+            myPredictionElement.textContent = 'Inference not started.';
+            myPredictionElement.style.color = '#008080';
+            myStatusElement.textContent = 'Application Reset. Select a model loading method to start.';
+            myDisableControls(false); 
+            console.log('Wake Word Detection app reset.');
+        }
+    </script>
+</body>
+</html>
