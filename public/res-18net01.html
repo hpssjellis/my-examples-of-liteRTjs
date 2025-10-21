@@ -1,0 +1,226 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LiteRT ResNet Image Classifier</title>
+
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 20px;
+            background-color: #f0f4f8;
+        }
+        #myContainer {
+            max-width: 550px;
+            width: 100%;
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 6px 15px rgba(0, 0, 0, 0.15);
+            margin-bottom: 20px;
+        }
+        #dogs {
+            border: 3px solid #1a73e8;
+            border-radius: 8px;
+            margin-top: 20px;
+            width: 100%;
+            max-width: 400px;
+            height: auto;
+            display: block;
+            object-fit: contain; /* Ensure image fits well */
+        }
+        .myButton {
+            background-color: #1a73e8;
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-top: 20px;
+            width: 100%;
+            box-sizing: border-box;
+            transition: background-color 0.3s, transform 0.1s;
+        }
+        .myButton:hover {
+            background-color: #155cb8;
+        }
+        .myButton:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .myStatus {
+            margin-top: 10px;
+            font-weight: bold;
+            color: #3c4043;
+            text-align: center;
+            padding: 12px;
+            border-radius: 6px;
+            background-color: #e6f7ff;
+            border: 1px solid #90caff;
+        }
+        #results {
+            margin-top: 15px;
+            padding: 10px;
+            border: 1px dashed #0f9d58;
+            border-radius: 6px;
+            background-color: #f4fff8;
+            list-style: none;
+            padding-left: 15px;
+        }
+    </style>
+
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.18.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgpu@4.18.0/dist/tf-backend-webgpu.min.js"></script>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@litertjs/core@0.1.0/dist/litert-core.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@litertjs/tfjs-interop@0.1.0/dist/litert-tfjs-interop.min.js"></script>
+
+</head>
+<body>
+
+    <div id="myContainer">
+        <h1 style="text-align: center; color: #3c4043;">LiteRT ResNet Classifier</h1>
+        <p class="myStatus" id="myStatusMessage">Initializing libraries and model...</p>
+
+        <img id="dogs" src="https://storage.googleapis.com/tfjs-models/demos/mobilenet/images/dog_1.jpg" alt="A dog to be classified">
+
+        <button class="myButton" id="classifyButton" onclick="runInference()">
+            Run ResNet Classification (WebGPU)
+        </button>
+
+        <ul id="results">
+            <li>Classification results will appear here.</li>
+        </ul>
+    </div>
+
+    <script>
+        // =================================================================
+        // ⚙️ GLOBAL VARIABLES
+        // =================================================================
+        let model = null;
+        let classes = null; // To hold the class names for post-processing
+        const TFLITE_MODEL_URL = 'https://storage.googleapis.com/litert/models/resnet18_int8.tflite';
+        const LABELS_URL = 'https://storage.googleapis.com/litert/models/imagenet_classes.json';
+        const WASM_PATH = 'https://cdn.jsdelivr.net/npm/@litertjs/core@0.1.0/wasm/'; // Path to LiteRT Wasm files
+
+        // =================================================================
+        // 💻 INITIALIZATION LOGIC
+        // =================================================================
+
+        /**
+         * @function setup
+         * Loads all necessary components: TFJS WebGPU backend, LiteRT runtime, labels, and the model.
+         */
+        async function setup() {
+            const statusEl = document.getElementById('myStatusMessage');
+            const classifyBtn = document.getElementById('classifyButton');
+            classifyBtn.disabled = true;
+
+            try {
+                // 1. Initialize TensorFlow.js WebGPU backend
+                statusEl.textContent = '1/5: Initializing TensorFlow.js WebGPU backend...';
+                await tf.setBackend('webgpu');
+                
+                // 2. Load LiteRT.js Wasm files
+                statusEl.textContent = '2/5: Loading LiteRT Wasm files...';
+                await litert.loadLiteRt(WASM_PATH); 
+                
+                // 3. Sync TFJS and LiteRT to use the same GPU device
+                statusEl.textContent = '3/5: Synchronizing GPU device...';
+                const backend = tf.backend();
+                litert.setWebGpuDevice(backend.device);
+                
+                // 4. Load Class Labels (ImageNet)
+                statusEl.textContent = '4/5: Loading class labels...';
+                const labelsResponse = await fetch(LABELS_URL);
+                classes = await labelsResponse.json();
+
+                // 5. Load and Compile LiteRT model (WebGPU recommended)
+                statusEl.textContent = '5/5: Loading and compiling LiteRT model (ResNet18)...';
+                model = await litert.loadAndCompile(TFLITE_MODEL_URL, { 
+                    accelerator: 'webgpu' 
+                });
+                
+                statusEl.textContent = 'Initialization complete! Click to classify.';
+                classifyBtn.disabled = false;
+                
+            } catch (error) {
+                statusEl.textContent = `Error: Initialization failed. See console for details.`;
+                console.error("Initialization error:", error);
+            }
+        }
+
+        // =================================================================
+        // 🚀 END-TO-END INFERENCE PIPELINE (Your Snippet)
+        // =================================================================
+
+        /**
+         * @function runInference
+         * Executes the classification pipeline on the 'dogs' image element.
+         */
+        async function runInference() {
+            if (!model) {
+                document.getElementById('myStatusMessage').textContent = 'Error: Model not loaded. Check console.';
+                return;
+            }
+
+            const statusEl = document.getElementById('myStatusMessage');
+            statusEl.textContent = 'Running inference...';
+            document.getElementById('classifyButton').disabled = true;
+
+            const dogs = document.getElementById('dogs');
+
+            // Wrap in a tf.tidy call to automatically clean up intermediate TensorFlow.js tensors.
+            const top5 = tf.tidy(() => {
+                // Get RGB data values from an image element and convert it to range [0, 1).
+                // Note: The snippet uses 3 channels implicitly.
+                const image = tf.browser.fromPixels(dogs, 3).div(255);
+
+                // These preprocessing steps match the standard PyTorch ResNet pipeline:
+                const imageData = image.resizeBilinear([224, 224])
+                    .sub([0.485, 0.456, 0.406]) // Subtract mean
+                    .div([0.229, 0.224, 0.225]) // Divide by standard deviation
+                    .reshape([1, 224, 224, 3])
+                    .transpose([0, 3, 1, 2]); // Convert to NCHW format required by LiteRT
+
+                // Run the model using the LiteRT interop function.
+                // The output is an array of tensors.
+                const probabilities = litert.runWithTfjsTensors(model, imageData)[0];
+
+                // Get the top five classes from the output tensor.
+                return tf.topk(probabilities, 5);
+            });
+
+            // Await the data from the resulting tensors
+            const values = await top5.values.data();
+            const indices = await top5.indices.data();
+
+            // Clean up the tfjs tensors to free up GPU memory
+            top5.values.dispose();
+            top5.indices.dispose();
+            
+            // Print the top five classes to the results list
+            const resultsList = document.getElementById('results');
+            resultsList.innerHTML = ''; // Clear previous results
+
+            for (let i = 0; i < 5; ++i) {
+                const text = `${classes[indices[i]]}: ${Math.round(values[i] * 100)}%`;
+                const listItem = document.createElement('li');
+                listItem.textContent = text;
+                resultsList.appendChild(listItem);
+            }
+            
+            statusEl.textContent = 'Classification complete!';
+            document.getElementById('classifyButton').disabled = false;
+        }
+
+        // Start the initialization process when the window loads
+        window.onload = setup;
+    </script>
+</body>
+</html>
