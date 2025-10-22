@@ -1,0 +1,396 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LiteRT MobileNet Classifier with Webcam</title>
+
+    <style>
+        body {
+            font-family: 'Inter', sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            margin: 20px;
+            background-color: #f0f4f8;
+        }
+        #myContainer {
+            max-width: 550px;
+            width: 100%;
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 6px 15px rgba(0, 0, 0, 0.15);
+            margin-bottom: 20px;
+        }
+        #dogs {
+            border: 3px solid #1a73e8;
+            border-radius: 8px;
+            margin-top: 20px;
+            width: 100%;
+            max-width: 400px;
+            height: auto;
+            display: block;
+            object-fit: contain;
+            margin-bottom: 15px;
+        }
+        #myVideo {
+            border: 3px solid #1a73e8;
+            border-radius: 8px;
+            margin-top: 20px;
+            width: 100%;
+            max-width: 400px;
+            height: auto;
+            display: none;
+            object-fit: contain;
+            margin-bottom: 15px;
+        }
+        #myCanvas {
+            display: none;
+        }
+        .myButton {
+            background-color: #1a73e8;
+            color: white;
+            padding: 10px 15px;
+            border: none;
+            border-radius: 6px;
+            cursor: pointer;
+            font-size: 16px;
+            margin-top: 10px;
+            width: 100%;
+            box-sizing: border-box;
+            transition: background-color 0.3s, transform 0.1s;
+        }
+        .myButton:hover {
+            background-color: #155cb8;
+        }
+        .myButton:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .myStatus {
+            margin-top: 10px;
+            font-weight: bold;
+            color: #3c4043;
+            text-align: center;
+            padding: 12px;
+            border-radius: 6px;
+            background-color: #e6f7ff;
+            border: 1px solid #90caff;
+        }
+        #results {
+            margin-top: 15px;
+            padding: 10px;
+            border: 1px dashed #0f9d58;
+            border-radius: 6px;
+            background-color: #f4fff8;
+            list-style: none;
+            padding-left: 15px;
+        }
+        .myGrid {
+            display: grid;
+            grid-template-columns: 1fr 1fr;
+            gap: 10px;
+        }
+    </style>
+
+    </head>
+<body>
+
+    <div id="myContainer">
+        <h1 style="text-align: center; color: #3c4043;">LiteRT MobileNet Classifier</h1>
+        <p class="myStatus" id="myStatusMessage">Initializing libraries and model...</p>
+
+        <img id="dogs" src="https://storage.googleapis.com/tfjs-models/demos/mobilenet/images/dog_1.jpg" alt="A dog to be classified">
+        
+        <video id="myVideo" playsinline autoplay></video>
+        
+        <canvas id="myCanvas" width="224" height="224"></canvas>
+
+        <div class="myGrid">
+            <button class="myButton" id="staticButton" onclick="runInference('static')">
+                Classify Static Image 🖼️
+            </button>
+            <button class="myButton" id="webcamButton" onclick="mySetupWebcam()">
+                Start Webcam 📹
+            </button>
+        </div>
+        <button class="myButton" id="stopWebcamButton" onclick="myStopWebcam()" style="background-color: #d93025; display: none;">
+            Stop Webcam
+        </button>
+
+        <ul id="results">
+            <li>Classification results will appear here.</li>
+        </ul>
+    </div>
+
+    <script type="module">
+        // =================================================================
+        // 1. ES MODULE IMPORTS
+        // =================================================================
+        import * as tf from 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.18.0/+esm';
+        import 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgpu@4.18.0/+esm';
+        import { loadLiteRt, loadAndCompile, setWebGpuDevice } from 'https://cdn.jsdelivr.net/npm/@litertjs/core@0.2.1/+esm';
+        import { runWithTfjsTensors } from 'https://cdn.jsdelivr.net/npm/@litertjs/tfjs-interop@0.1.1/+esm';
+
+
+        // =================================================================
+        // ⚙️ GLOBAL VARIABLES
+        // =================================================================
+        const MODEL_INPUT_SIZE = 224;
+        let model = null;
+        let classes = null; 
+        let isWebcamActive = false;
+        let animationFrameId = null;
+        let videoStream = null;
+        let canvasContext = null;
+        let isProcessing = false;
+
+        // Using MobileNet V2 - properly formatted TFLite model
+        const TFLITE_MODEL_URL = 'https://storage.googleapis.com/tfweb/models/mobilenet_v2_1.0_224.tflite';
+        const LABELS_URL = 'https://storage.googleapis.com/tfweb/models/imagenet_labels.json';
+        const WASM_PATH = 'https://cdn.jsdelivr.net/npm/@litertjs/core@0.2.1/wasm/'; 
+
+        // DOM Elements
+        const statusEl = document.getElementById('myStatusMessage');
+        const staticImgEl = document.getElementById('dogs');
+        const canvasEl = document.getElementById('myCanvas');
+        const videoEl = document.getElementById('myVideo');
+        const classifyBtn = document.getElementById('staticButton');
+        const webcamBtn = document.getElementById('webcamButton');
+        const stopBtn = document.getElementById('stopWebcamButton');
+        const resultsList = document.getElementById('results');
+
+        // Export functions to the global window object
+        window.mySetupWebcam = mySetupWebcam;
+        window.myStopWebcam = myStopWebcam;
+        window.runInference = runInference;
+
+
+        // =================================================================
+        // 💻 INITIALIZATION LOGIC
+        // =================================================================
+        async function setup() {
+            canvasContext = canvasEl.getContext('2d', { willReadFrequently: true });
+            classifyBtn.disabled = true;
+            webcamBtn.disabled = true;
+
+            try {
+                // 1. Initialize TensorFlow.js WebGPU backend
+                statusEl.textContent = '1/4: Initializing WebGPU...';
+                await tf.setBackend('webgpu');
+                await tf.ready();
+                
+                // 2. Load LiteRT.js Wasm files
+                statusEl.textContent = '2/4: Loading LiteRT core...';
+                await loadLiteRt(WASM_PATH);
+                
+                // 3. Sync GPU device
+                const backend = tf.backend();
+                if (backend && backend.device) {
+                    setWebGpuDevice(backend.device);
+                } else {
+                    console.warn('WebGPU backend device not available, skipping setWebGpuDevice');
+                }
+                
+                // 4. Load Class Labels (ImageNet 1001 classes - includes background)
+                statusEl.textContent = '3/4: Loading class labels...';
+                const labelsResponse = await fetch(LABELS_URL);
+                if (!labelsResponse.ok) {
+                    throw new Error(`Failed to load labels: ${labelsResponse.status}`);
+                }
+                classes = await labelsResponse.json();
+
+                // 5. Load and Compile LiteRT model
+                statusEl.textContent = '4/4: Loading MobileNet V2 model...';
+                model = await loadAndCompile(TFLITE_MODEL_URL, { 
+                    accelerator: 'webgpu' 
+                });
+                
+                statusEl.textContent = 'Ready! Choose static image or webcam.';
+                classifyBtn.disabled = false;
+                webcamBtn.disabled = false;
+                
+            } catch (error) {
+                statusEl.textContent = `Error: ${error.message}`;
+                console.error("Initialization error:", error);
+                console.error("Stack trace:", error.stack);
+            }
+        }
+
+        // =================================================================
+        // 📹 WEBCAM CONTROL LOGIC
+        // =================================================================
+        async function mySetupWebcam() {
+            if (isWebcamActive || !model) return;
+
+            statusEl.textContent = 'Requesting camera access...';
+            classifyBtn.disabled = true;
+            webcamBtn.disabled = true;
+
+            try {
+                const stream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        width: { ideal: 640 },
+                        height: { ideal: 480 },
+                        facingMode: 'user'
+                    },
+                    audio: false
+                });
+
+                videoStream = stream;
+                videoEl.srcObject = stream;
+                
+                // Wait for video to be ready
+                await new Promise((resolve, reject) => {
+                    videoEl.onloadedmetadata = () => {
+                        videoEl.play()
+                            .then(resolve)
+                            .catch(reject);
+                    };
+                    videoEl.onerror = reject;
+                });
+                
+                // Additional wait to ensure video is really playing
+                await new Promise(resolve => setTimeout(resolve, 500));
+                
+                // Switch DOM elements for webcam view
+                staticImgEl.style.display = 'none';
+                videoEl.style.display = 'block';
+                webcamBtn.style.display = 'none';
+                stopBtn.style.display = 'block';
+
+                isWebcamActive = true;
+                statusEl.textContent = 'Webcam active. Running classification...';
+                myRunInferenceLoop();
+
+            } catch (error) {
+                statusEl.textContent = `Error accessing webcam: ${error.message}`;
+                webcamBtn.disabled = false;
+                classifyBtn.disabled = false;
+                console.error('Webcam access error:', error);
+            }
+        }
+
+        function myStopWebcam() {
+            if (animationFrameId) {
+                cancelAnimationFrame(animationFrameId);
+                animationFrameId = null;
+            }
+            if (videoStream) {
+                videoStream.getTracks().forEach(track => track.stop());
+                videoStream = null;
+            }
+
+            // Reset DOM elements
+            isWebcamActive = false;
+            videoEl.style.display = 'none';
+            staticImgEl.style.display = 'block';
+            webcamBtn.style.display = 'block';
+            stopBtn.style.display = 'none';
+            classifyBtn.disabled = false;
+            webcamBtn.disabled = false;
+            statusEl.textContent = 'Webcam stopped. Ready for static image classification.';
+            resultsList.innerHTML = '<li>Classification results will appear here.</li>';
+        }
+
+        /**
+         * @function myRunInferenceLoop
+         * The main loop for frame capture and model inference from the webcam.
+         */
+        function myRunInferenceLoop() {
+            if (!isWebcamActive || !model) return;
+            
+            // Only process if not already processing
+            if (!isProcessing && videoEl.readyState === videoEl.HAVE_ENOUGH_DATA) {
+                // Draw the video frame to the canvas
+                canvasContext.drawImage(videoEl, 0, 0, MODEL_INPUT_SIZE, MODEL_INPUT_SIZE);
+                
+                // Run inference on the canvas image data
+                runInference('webcam');
+            }
+            
+            // Schedule the next frame
+            animationFrameId = requestAnimationFrame(myRunInferenceLoop);
+        }
+
+        // =================================================================
+        // 🚀 INFERENCE PIPELINE
+        // =================================================================
+        async function runInference(source) {
+            if (!model) {
+                statusEl.textContent = 'Error: Model not loaded.';
+                return;
+            }
+            
+            if (source === 'webcam' && isProcessing) {
+                return;
+            }
+            
+            if (source === 'static') {
+                statusEl.textContent = 'Classifying static image...';
+                classifyBtn.disabled = true;
+            } else {
+                isProcessing = true;
+            }
+            
+            try {
+                const inputSource = (source === 'static') ? staticImgEl : canvasEl;
+                
+                // Pre-processing and Inference for MobileNet V2
+                const top5 = tf.tidy(() => {
+                    // MobileNet V2 expects input in range [-1, 1]
+                    const image = tf.browser.fromPixels(inputSource, 3)
+                        .resizeBilinear([MODEL_INPUT_SIZE, MODEL_INPUT_SIZE])
+                        .toFloat()
+                        .div(127.5)
+                        .sub(1.0)
+                        .expandDims(0);
+
+                    const probabilities = runWithTfjsTensors(model, image)[0];
+
+                    // Get the top five classes
+                    return tf.topk(probabilities, 5);
+                });
+
+                // Post-processing and Output
+                const values = await top5.values.data();
+                const indices = await top5.indices.data();
+
+                // Clean up the tfjs tensors
+                top5.values.dispose();
+                top5.indices.dispose();
+                
+                // Display results
+                resultsList.innerHTML = ''; 
+                for (let i = 0; i < 5; ++i) {
+                    const classIndex = indices[i];
+                    const label = classes[classIndex] || `Class ${classIndex}`;
+                    const text = `${label}: ${Math.round(values[i] * 100)}%`;
+                    const listItem = document.createElement('li');
+                    listItem.textContent = text;
+                    resultsList.appendChild(listItem);
+                }
+                
+                if (source === 'static') {
+                    statusEl.textContent = 'Classification complete!';
+                    classifyBtn.disabled = false;
+                }
+            } catch (error) {
+                console.error('Inference error:', error);
+                statusEl.textContent = `Error during inference: ${error.message}`;
+                if (source === 'static') {
+                    classifyBtn.disabled = false;
+                }
+            } finally {
+                if (source === 'webcam') {
+                    isProcessing = false;
+                }
+            }
+        }
+
+        // Start the initialization process when the window loads
+        window.onload = setup;
+    </script>
+</body>
+</html>
