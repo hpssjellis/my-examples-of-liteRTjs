@@ -1,0 +1,12 @@
+// ... in myLoadModelAndStartSensors(myUrl)
+// *** CRITICAL iOS FIX: Request DeviceMotionEvent permission ***
+if (typeof DeviceMotionEvent.requestPermission === 'function') {
+    const permission = await DeviceMotionEvent.requestPermission();
+    if (permission !== 'granted') {
+        throw new Error('Motion sensor permission denied by user.');
+    }
+    myStatusElement.textContent = 'Permission granted! Starting motion capture...';
+} else {
+    myStatusElement.textContent = 'Starting motion capture...';
+}
+// ...
