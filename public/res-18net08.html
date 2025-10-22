@@ -1,0 +1,313 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>LiteRT MobileNet Classifier with Webcam</title>
+    </head>
+<body style="font-family: sans-serif; display: flex; flex-direction: column; align-items: center; margin: 20px; background-color: #f0f4f8;">
+    <div id="myContainer" style="max-width: 550px; width: 100%; background: white; padding: 20px; border-radius: 12px; box-shadow: 0 6px 15px rgba(0, 0, 0, 0.15); margin-bottom: 20px;">
+        <h1 style="text-align: center; color: #3c4043;">LiteRT MobileNet Classifier</h1>
+        <p id="myStatusMessage" style="margin-top: 10px; font-weight: bold; color: #3c4043; text-align: center; padding: 12px; border-radius: 6px; background-color: #e6f7ff; border: 1px solid #90caff;">Initializing libraries and model...</p>
+        
+        <img id="myStaticImage" src="https://storage.googleapis.com/tfjs-models/demos/mobilenet/images/dog_1.jpg" alt="A dog to be classified" style="border: 3px solid #1a73e8; border-radius: 8px; margin-top: 20px; width: 100%; max-width: 400px; height: auto; display: block; object-fit: contain; margin-bottom: 15px;">
+        
+        <video id="myVideoFeed" playsinline autoplay style="border: 3px solid #1a73e8; border-radius: 8px; margin-top: 20px; width: 100%; max-width: 400px; height: auto; display: none; object-fit: contain; margin-bottom: 15px;"></video>
+        
+        <canvas id="myCanvasFrame" width="224" height="224" style="display: none;"></canvas>
+        
+        <div id="myButtonGrid" style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
+            <button id="myStaticButton" onclick="myRunInference('static')" style="background-color: #1a73e8; color: white; padding: 10px 15px; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; margin-top: 10px; width: 100%; box-sizing: border-box; transition: background-color 0.3s, transform 0.1s;">
+                Classify Static Image 🖼️
+            </button>
+            <button id="myWebcamButton" onclick="myStartWebcam()" style="background-color: #1a73e8; color: white; padding: 10px 15px; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; margin-top: 10px; width: 100%; box-sizing: border-box; transition: background-color 0.3s, transform 0.1s;">
+                Start Webcam 📹
+            </button>
+        </div>
+        <button id="myStopWebcamButton" onclick="myStopWebcam()" style="background-color: #d93025; color: white; padding: 10px 15px; border: none; border-radius: 6px; cursor: pointer; font-size: 16px; margin-top: 10px; width: 100%; box-sizing: border-box; display: none;">
+            Stop Webcam
+        </button>
+        <ul id="myResultsList" style="margin-top: 15px; padding: 10px; border: 1px dashed #0f9d58; border-radius: 6px; background-color: #f4fff8; list-style: none; padding-left: 15px;">
+            <li>Classification results will appear here.</li>
+        </ul>
+    </div>
+    
+    <script type="module">
+        // =================================================================
+        // 1. ES MODULE IMPORTS
+        // =================================================================
+        import * as tf from 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.18.0/+esm';
+        import 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgpu@4.18.0/+esm';
+        import { loadLiteRt, loadAndCompile, setWebGpuDevice, runWithTfjsTensors } from 'https://cdn.jsdelivr.net/npm/@litertjs/core@0.2.1/+esm';
+        // Note: runWithTfjsTensors is imported from @litertjs/core now, not @litertjs/tfjs-interop
+        
+        // =================================================================
+        // ⚙️ GLOBAL VARIABLES
+        // =================================================================
+        const MY_MODEL_INPUT_SIZE = 224;
+        const MY_TFLITE_MODEL_URL = 'https://storage.googleapis.com/tfweb/models/mobilenet_v2_1.0_224.tflite';
+        const MY_LABELS_URL = 'https://storage.googleapis.com/tfweb/models/imagenet_labels.json';
+        const MY_WASM_PATH = 'https://cdn.jsdelivr.net/npm/@litertjs/core@0.2.1/wasm/';
+        
+        let myModel = null;
+        let myClasses = null; 
+        let myIsWebcamActive = false;
+        let myAnimationFrameId = null;
+        let myVideoStream = null;
+        let myCanvasContext = null;
+        let myIsProcessing = false;
+        
+        // DOM Elements (using descriptive camelCase with "my" prefix)
+        const myStatusMessageEl = document.getElementById('myStatusMessage');
+        const myStaticImageEl = document.getElementById('myStaticImage');
+        const myCanvasFrameEl = document.getElementById('myCanvasFrame');
+        const myVideoFeedEl = document.getElementById('myVideoFeed');
+        const myStaticButtonEl = document.getElementById('myStaticButton');
+        const myWebcamButtonEl = document.getElementById('myWebcamButton');
+        const myStopWebcamButtonEl = document.getElementById('myStopWebcamButton');
+        const myResultsListEl = document.getElementById('myResultsList');
+        
+        // Export functions to the global window object for static onclick links
+        window.myStartWebcam = myStartWebcam;
+        window.myStopWebcam = myStopWebcam;
+        window.myRunInference = myRunInference;
+
+        // =================================================================
+        // 💻 INITIALIZATION LOGIC
+        // =================================================================
+        async function mySetupApp() {
+            myCanvasContext = myCanvasFrameEl.getContext('2d', { willReadFrequently: true });
+            myStaticButtonEl.disabled = true;
+            myWebcamButtonEl.disabled = true;
+            
+            try {
+                // 1. Initialize TensorFlow.js WebGPU backend
+                myStatusMessageEl.textContent = '1/4: Initializing WebGPU...';
+                await tf.setBackend('webgpu');
+                await tf.ready();
+                
+                // 2. Load LiteRT.js Wasm files
+                myStatusMessageEl.textContent = '2/4: Loading LiteRT core...';
+                await loadLiteRt(MY_WASM_PATH);
+                
+                // 3. Sync GPU device
+                const myBackend = tf.backend();
+                if (myBackend && myBackend.device) {
+                    setWebGpuDevice(myBackend.device);
+                } else {
+                    console.warn('WebGPU backend device not available, skipping setWebGpuDevice');
+                }
+                
+                // 4. Load Class Labels (ImageNet 1001 classes - includes background)
+                myStatusMessageEl.textContent = '3/4: Loading class labels...';
+                const myLabelsResponse = await fetch(MY_LABELS_URL);
+                if (!myLabelsResponse.ok) {
+                    throw new Error(`Failed to load labels: ${myLabelsResponse.status}`);
+                }
+                myClasses = await myLabelsResponse.json();
+                
+                // 5. Load and Compile LiteRT model
+                myStatusMessageEl.textContent = '4/4: Loading MobileNet V2 model...';
+                myModel = await loadAndCompile(MY_TFLITE_MODEL_URL, { 
+                     accelerator: 'webgpu' 
+                 });
+                
+                myStatusMessageEl.textContent = 'Ready! Choose static image or webcam.';
+                myStaticButtonEl.disabled = false;
+                myWebcamButtonEl.disabled = false;
+            
+            } catch (myError) {
+                myStatusMessageEl.textContent = `Error: ${myError.message}`;
+                console.error("Initialization error:", myError);
+            }
+        }
+
+        // =================================================================
+        // 📹 WEBCAM CONTROL LOGIC
+        // =================================================================
+        async function myStartWebcam() {
+            if (myIsWebcamActive || !myModel) return;
+            myStatusMessageEl.textContent = 'Requesting camera access...';
+            myStaticButtonEl.disabled = true;
+            myWebcamButtonEl.disabled = true;
+            
+            try {
+                const myStream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        width: { ideal: 640 },
+                        height: { ideal: 480 },
+                        facingMode: 'user'
+                    },
+                    audio: false
+                });
+                myVideoStream = myStream;
+                myVideoFeedEl.srcObject = myStream;
+                
+                // Wait for video to be ready and play
+                await new Promise((resolve, reject) => {
+                    myVideoFeedEl.onloadedmetadata = () => {
+                        myVideoFeedEl.play()
+                            .then(resolve)
+                            .catch(reject);
+                    };
+                    myVideoFeedEl.onerror = reject;
+                });
+                
+                await new Promise(resolve => setTimeout(resolve, 500)); // Additional wait for playing
+                
+                // Switch DOM elements for webcam view
+                myStaticImageEl.style.display = 'none';
+                myVideoFeedEl.style.display = 'block';
+                myWebcamButtonEl.style.display = 'none';
+                myStopWebcamButtonEl.style.display = 'block';
+                myIsWebcamActive = true;
+                myStatusMessageEl.textContent = 'Webcam active. Running classification...';
+                myRunInferenceLoop();
+            
+            } catch (myError) {
+                myStatusMessageEl.textContent = `Error accessing webcam: ${myError.message}`;
+                myWebcamButtonEl.disabled = false;
+                myStaticButtonEl.disabled = false;
+                console.error('Webcam access error:', myError);
+            }
+        }
+
+        function myStopWebcam() {
+            if (myAnimationFrameId) {
+                cancelAnimationFrame(myAnimationFrameId);
+                myAnimationFrameId = null;
+            }
+            if (myVideoStream) {
+                myVideoStream.getTracks().forEach(myTrack => myTrack.stop());
+                myVideoStream = null;
+            }
+            
+            // Reset DOM elements
+            myIsWebcamActive = false;
+            myVideoFeedEl.style.display = 'none';
+            myStaticImageEl.style.display = 'block';
+            myWebcamButtonEl.style.display = 'block';
+            myStopWebcamButtonEl.style.display = 'none';
+            myStaticButtonEl.disabled = false;
+            myWebcamButtonEl.disabled = false;
+            myStatusMessageEl.textContent = 'Webcam stopped. Ready for static image classification.';
+            myResultsListEl.innerHTML = '<li>Classification results will appear here.</li>';
+        }
+
+        /**
+         * The main loop for frame capture and model inference from the webcam.
+         */
+        function myRunInferenceLoop() {
+            if (!myIsWebcamActive || !myModel) return;
+            
+            // Only process if not already processing and video has data
+            if (!myIsProcessing && myVideoFeedEl.readyState === myVideoFeedEl.HAVE_ENOUGH_DATA) {
+                // Draw the video frame to the canvas for consistent input size
+                myCanvasContext.drawImage(myVideoFeedEl, 0, 0, MY_MODEL_INPUT_SIZE, MY_MODEL_INPUT_SIZE);
+                
+                // Run inference on the canvas image data
+                myRunInference('webcam');
+            }
+            
+            // Schedule the next frame
+            myAnimationFrameId = requestAnimationFrame(myRunInferenceLoop);
+        }
+
+        // =================================================================
+        // 🚀 INFERENCE PIPELINE
+        // =================================================================
+        
+        /**
+         * Converts the LiteRT.Tensor output back into a TensorFlow.js Tensor.
+         * @param {Object} liteRtTensor - The output tensor object from LiteRT.
+         * @returns {tf.Tensor} The TensorFlow.js Tensor.
+         */
+        function myProcessOutputTensor(liteRtTensor) {
+            // LiteRT returns data as a plain array/Float32Array and its shape
+            const myTensor = tf.tensor(liteRtTensor.data, liteRtTensor.shape, 'float32');
+            return myTensor;
+        }
+
+        async function myRunInference(mySource) {
+            if (!myModel) {
+                myStatusMessageEl.textContent = 'Error: Model not loaded.';
+                return;
+            }
+            
+            if (mySource === 'webcam' && myIsProcessing) {
+                return;
+            }
+            
+            if (mySource === 'static') {
+                myStatusMessageEl.textContent = 'Classifying static image...';
+                myStaticButtonEl.disabled = true;
+            } else {
+                myIsProcessing = true;
+            }
+            
+            try {
+                const myInputSourceEl = (mySource === 'static') ? myStaticImageEl : myCanvasFrameEl;
+                
+                let myTop5Results;
+                
+                // Pre-processing and Inference for MobileNet V2
+                tf.tidy(() => {
+                    // MobileNet V2 expects input in range [-1, 1]
+                    const myImageTensor = tf.browser.fromPixels(myInputSourceEl, 3)
+                        .resizeBilinear([MY_MODEL_INPUT_SIZE, MY_MODEL_INPUT_SIZE])
+                        .toFloat()
+                        .div(127.5) // Scale to [0, 2]
+                        .sub(1.0)   // Shift to [-1, 1]
+                        .expandDims(0); // Add batch dimension [1, 224, 224, 3]
+                        
+                    // LiteRT inference returns an array of LiteRT.Tensor objects
+                    const myLiteRtOutputs = runWithTfjsTensors(myModel, myImageTensor);
+                    
+                    // FIX: Convert the LiteRT output tensor back to a TF.js tensor
+                    const myProbabilitiesTensor = myProcessOutputTensor(myLiteRtOutputs[0]);
+                    
+                    // Get the top five classes using the TF.js tensor
+                    myTop5Results = tf.topk(myProbabilitiesTensor, 5);
+                }); // tf.tidy clean-up ends here
+                
+                // Post-processing and Output
+                const myValues = await myTop5Results.values.data();
+                const myIndices = await myTop5Results.indices.data();
+                
+                // Clean up the tfjs tensors explicitly
+                myTop5Results.values.dispose();
+                myTop5Results.indices.dispose();
+                
+                // Display results
+                myResultsListEl.innerHTML = ''; 
+                for (let i = 0; i < 5; ++i) {
+                    const myClassIndex = myIndices[i];
+                    const myLabel = myClasses[myClassIndex] || `Class ${myClassIndex}`;
+                    const myText = `${myLabel}: ${Math.round(myValues[i] * 100)}%`;
+                    const myListItem = document.createElement('li');
+                    myListItem.textContent = myText;
+                    myResultsListEl.appendChild(myListItem);
+                }
+                
+                if (mySource === 'static') {
+                    myStatusMessageEl.textContent = 'Classification complete!';
+                    myStaticButtonEl.disabled = false;
+                }
+            } catch (myError) {
+                console.error('Inference error:', myError);
+                myStatusMessageEl.textContent = `Error during inference: ${myError.message}`;
+                if (mySource === 'static') {
+                    myStaticButtonEl.disabled = false;
+                }
+            } finally {
+                if (mySource === 'webcam') {
+                    myIsProcessing = false;
+                }
+            }
+        }
+
+        // Start the initialization process when the window loads
+        window.onload = mySetupApp;
+    </script>
+</body>
+</html>
