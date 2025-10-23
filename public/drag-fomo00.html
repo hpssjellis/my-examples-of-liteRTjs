@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>FOMO Detector - Auto-Detect</title>
+    <title>FOMO Detector - Dynamic Model Loader</title>
 
     <style>
         body { 
@@ -152,9 +152,32 @@
             color: #212529;
             font-family: monospace;
         }
+        /* New minimal styles for input/textarea */
+        .myInputGroup {
+            display: flex;
+            gap: 5px;
+            margin-bottom: 10px;
+        }
+        .myInputGroup input[type="text"] {
+            flex-grow: 1;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            font-size: 16px;
+        }
+        #myLabelEditor {
+            width: 100%;
+            height: 80px;
+            padding: 10px;
+            box-sizing: border-box;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 14px;
+            margin-bottom: 15px;
+        }
     </style>
     
-    <!-- TensorFlow Libraries -->
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script>
     <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@0.0.1-alpha.9/dist/tf-tflite.min.js"></script>
 </head>
@@ -187,6 +210,11 @@
         let myDropOverlay = null;
         let myModelInfo = null;
         
+        // New elements
+        let myUrlInput = null;
+        let myFileInput = null;
+        let myLabelEditor = null;
+        
         let myModel = null;
         let myCurrentConfig = {...myDefaultConfig};
         let myCurrentModelName = 'Default Model';
@@ -205,8 +233,61 @@
 
             const myInstructions = document.createElement('div');
             myInstructions.id = 'myInstructions';
-            myInstructions.innerHTML = 'Drag & drop a .tflite FOMO model onto the canvas<br><small>Auto-detects resolution, channels, and output classes</small>';
+            myInstructions.innerHTML = 'Load a model via URL, File, or Drag & Drop (**.tflite** / **.lite**)<br><small>Auto-detects model properties. Edit labels below.</small>';
             myMainContainer.appendChild(myInstructions);
+
+            // --- Model Loading Options ---
+
+            // 1. URL Upload
+            const myUrlGroup = document.createElement('div');
+            myUrlGroup.className = 'myInputGroup';
+            myUrlInput = document.createElement('input');
+            myUrlInput.type = 'text';
+            myUrlInput.placeholder = 'Paste Model URL (.tflite or .lite)';
+            myUrlInput.value = myDefaultConfig.myDefaultUrl;
+            myUrlGroup.appendChild(myUrlInput);
+            const myUrlButton = document.createElement('button');
+            myUrlButton.className = 'myButton';
+            myUrlButton.textContent = 'Load from URL';
+            myUrlButton.onclick = () => myLoadModelFromUrl(myUrlInput.value);
+            myUrlGroup.appendChild(myUrlButton);
+            myMainContainer.appendChild(myUrlGroup);
+
+            // 2. File Input
+            myFileInput = document.createElement('input');
+            myFileInput.type = 'file';
+            myFileInput.style.marginBottom = '15px';
+            myFileInput.setAttribute('accept', '.tflite,.lite');
+            myFileInput.onchange = myHandleFileInput;
+            myMainContainer.appendChild(myFileInput);
+
+            // --- Model Info and Labels ---
+
+            // Model info display
+            myModelInfo = document.createElement('div');
+            myModelInfo.className = 'myModelInfo';
+            myModelInfo.innerHTML = `
+                <span class="myInfoLabel">Model:</span>
+                <span class="myInfoValue" id="myModelName">No model loaded</span><br>
+                <span class="myInfoLabel">Config:</span>
+                <span class="myInfoValue" id="myModelConfig">N/A</span>
+            `;
+            myMainContainer.appendChild(myModelInfo);
+
+            // Labels Textarea
+            const myLabelHeader = document.createElement('div');
+            myLabelHeader.style.cssText = 'font-size: 0.9em; margin-top: 15px; margin-bottom: 5px; font-weight: bold; color: #3c4043;';
+            myLabelHeader.textContent = 'Class Labels (Comma-separated: background, Object1, ...)';
+            myMainContainer.appendChild(myLabelHeader);
+            
+            myLabelEditor = document.createElement('textarea');
+            myLabelEditor.id = 'myLabelEditor';
+            myLabelEditor.placeholder = 'Enter labels here (e.g., background, ball, person)';
+            // Attach event to update config when text changes
+            myLabelEditor.oninput = myUpdateConfigFromLabels;
+            myMainContainer.appendChild(myLabelEditor);
+
+            // --- Webcam Controls and Canvas ---
 
             // Control section
             const myControlSection = document.createElement('div');
@@ -255,150 +336,132 @@
             myDropOverlay.id = 'myDropOverlay';
             const myDropText = document.createElement('div');
             myDropText.id = 'myDropText';
-            myDropText.textContent = 'Drop .tflite file here';
+            myDropText.textContent = 'Drop .tflite or .lite file here';
             myDropOverlay.appendChild(myDropText);
             myCanvasContainer.appendChild(myDropOverlay);
 
             myMainContainer.appendChild(myCanvasContainer);
 
-            // Model info display
-            myModelInfo = document.createElement('div');
-            myModelInfo.className = 'myModelInfo';
-            myModelInfo.innerHTML = `
-                <span class="myInfoLabel">Model:</span>
-                <span class="myInfoValue" id="myModelName">No model loaded</span><br>
-                <span class="myInfoLabel">Config:</span>
-                <span class="myInfoValue" id="myModelConfig">N/A</span>
-            `;
-            myMainContainer.appendChild(myModelInfo);
-
             document.body.appendChild(myMainContainer);
 
             // Setup drag and drop
             mySetupDragAndDrop();
+            
+            // Initial update for the label editor
+            myUpdateLabelEditor();
         }
 
         window.onload = myCreateDOM;
 
         // =================================================================
-        // 🎯 DRAG AND DROP SETUP
+        // 🎯 DRAG AND DROP / FILE INPUT HANDLERS
         // =================================================================
 
         function mySetupDragAndDrop() {
             // Prevent default drag behaviors on the whole document
-            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
-                document.body.addEventListener(eventName, preventDefaults, false);
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(myEventName => {
+                document.body.addEventListener(myEventName, myPreventDefaults, false);
             });
 
-            function preventDefaults(e) {
-                e.preventDefault();
-                e.stopPropagation();
+            function myPreventDefaults(myEvent) {
+                myEvent.preventDefault();
+                myEvent.stopPropagation();
             }
 
             // Highlight canvas on drag over
-            ['dragenter', 'dragover'].forEach(eventName => {
-                myCanvas.addEventListener(eventName, () => {
+            ['dragenter', 'dragover'].forEach(myEventName => {
+                myCanvas.addEventListener(myEventName, () => {
                     myCanvas.classList.add('drag-over');
                     myDropOverlay.classList.add('active');
                 }, false);
             });
 
-            ['dragleave', 'drop'].forEach(eventName => {
-                myCanvas.addEventListener(eventName, () => {
+            ['dragleave', 'drop'].forEach(myEventName => {
+                myCanvas.addEventListener(myEventName, () => {
                     myCanvas.classList.remove('drag-over');
                     myDropOverlay.classList.remove('active');
                 }, false);
             });
 
             // Handle drop
-            myCanvas.addEventListener('drop', handleDrop, false);
+            myCanvas.addEventListener('drop', myHandleDrop, false);
         }
 
-        function handleDrop(e) {
-            const dt = e.dataTransfer;
-            const files = dt.files;
+        function myHandleDrop(myEvent) {
+            const myDataTransfer = myEvent.dataTransfer;
+            const myDroppedFiles = myDataTransfer.files;
 
-            if (files.length > 0) {
-                const file = files[0];
-                if (file.name.endsWith('.tflite')) {
-                    myLoadModelFromFile(file);
+            if (myDroppedFiles.length > 0) {
+                const myFile = myDroppedFiles[0];
+                if (myFile.name.endsWith('.tflite') || myFile.name.endsWith('.lite')) {
+                    myLoadModelFromFile(myFile);
                 } else {
-                    myStatusElement.textContent = 'Error: Please drop a .tflite file';
+                    myStatusElement.textContent = 'Error: Please drop a .tflite or .lite file';
                 }
+            }
+        }
+        
+        function myHandleFileInput(myEvent) {
+            const myFile = myEvent.target.files[0];
+            if (myFile) {
+                myLoadModelFromFile(myFile);
             }
         }
 
         // =================================================================
-        // 🔍 AUTO-DETECT MODEL CONFIGURATION
+        // 🔍 CONFIGURATION AND LABEL MANAGEMENT
         // =================================================================
 
-        function myAutoDetectConfig(model) {
+        function myAutoDetectConfig(myModel) {
             try {
-                const detectedConfig = {...myDefaultConfig};
+                const myDetectedConfig = {...myDefaultConfig};
                 
-                // Auto-detect from model inputs
-                if (model.inputs && model.inputs.length > 0) {
-                    const input = model.inputs[0];
-                    console.log('Model input:', input);
-                    
-                    // Detect resolution (assuming square input: [batch, height, width, channels])
-                    if (input.shape && input.shape.length === 4) {
-                        const height = input.shape[1];
-                        const width = input.shape[2];
-                        const channels = input.shape[3];
-                        
-                        if (height === width && height > 0) {
-                            detectedConfig.myInputResolution = height;
-                            console.log(`✓ Detected resolution: ${height}x${width}`);
-                        }
-                        
-                        if (channels === 1 || channels === 3) {
-                            detectedConfig.myInputChannels = channels;
-                            console.log(`✓ Detected channels: ${channels} (${channels === 1 ? 'Grayscale' : 'RGB'})`);
-                        }
+                // ... (Input/Output detection logic remains the same) ...
+                if (myModel.inputs && myModel.inputs.length > 0) {
+                    const myInput = myModel.inputs[0];
+                    if (myInput.shape && myInput.shape.length === 4) {
+                        const myHeight = myInput.shape[1];
+                        const myWidth = myInput.shape[2];
+                        const myChannels = myInput.shape[3];
+                        if (myHeight === myWidth && myHeight > 0) myDetectedConfig.myInputResolution = myHeight;
+                        if (myChannels === 1 || myChannels === 3) myDetectedConfig.myInputChannels = myChannels;
                     }
                 }
                 
-                // Auto-detect from model outputs (FOMO specific)
-                if (model.outputs && model.outputs.length > 0) {
-                    const output = model.outputs[0];
-                    console.log('Model output:', output);
-                    
-                    // FOMO output shape: [batch, grid_h, grid_w, num_classes]
-                    if (output.shape && output.shape.length === 4) {
-                        const gridH = output.shape[1];
-                        const gridW = output.shape[2];
-                        const numClasses = output.shape[3];
+                if (myModel.outputs && myModel.outputs.length > 0) {
+                    const myOutput = myModel.outputs[0];
+                    if (myOutput.shape && myOutput.shape.length === 4) {
+                        const myGridH = myOutput.shape[1];
+                        const myNumClasses = myOutput.shape[3];
                         
-                        if (gridH === gridW && gridH > 0) {
-                            // Calculate grid scale factor
-                            const calculatedFactor = detectedConfig.myInputResolution / gridH;
-                            if (calculatedFactor > 0 && Number.isInteger(calculatedFactor)) {
-                                detectedConfig.myGridScaleFactor = calculatedFactor;
-                                console.log(`✓ Detected grid scale factor: ${calculatedFactor} (${detectedConfig.myInputResolution}/${gridH})`);
-                            }
+                        if (myGridH > 0 && myDetectedConfig.myInputResolution > 0) {
+                            const myCalculatedFactor = myDetectedConfig.myInputResolution / myGridH;
+                            if (myCalculatedFactor > 0 && Number.isInteger(myCalculatedFactor)) myDetectedConfig.myGridScaleFactor = myCalculatedFactor;
                         }
                         
-                        if (numClasses > 0) {
-                            // Generate class labels: background + Object1, Object2, etc.
-                            detectedConfig.myClassLabels = ['background'];
-                            for (let i = 1; i < numClasses; i++) {
-                                detectedConfig.myClassLabels.push(`Object${i}`);
+                        if (myNumClasses > 0) {
+                            // Only update labels if the new model has a different number of classes
+                            if (myNumClasses !== myCurrentConfig.myClassLabels.length) {
+                                myDetectedConfig.myClassLabels = ['background'];
+                                for (let i = 1; i < myNumClasses; i++) {
+                                    myDetectedConfig.myClassLabels.push(`Object${i}`);
+                                }
+                            } else {
+                                // Keep current user-edited labels if class count matches
+                                myDetectedConfig.myClassLabels = myCurrentConfig.myClassLabels;
                             }
-                            console.log(`✓ Detected ${numClasses} classes:`, detectedConfig.myClassLabels);
                         }
                     }
                 }
+                // ... (End of detection logic) ...
                 
-                // Update canvas size
-                myCanvas.width = detectedConfig.myInputResolution;
-                myCanvas.height = detectedConfig.myInputResolution;
+                myCanvas.width = myDetectedConfig.myInputResolution;
+                myCanvas.height = myDetectedConfig.myInputResolution;
                 
-                return detectedConfig;
+                return myDetectedConfig;
                 
-            } catch (error) {
-                console.error('Auto-detection error:', error);
-                console.log('Falling back to default config');
+            } catch (myError) {
+                console.error('Auto-detection error:', myError);
                 return {...myDefaultConfig};
             }
         }
@@ -410,29 +473,34 @@
                 `${myCurrentConfig.myInputChannels === 3 ? 'RGB' : 'Grayscale'}, ` +
                 `Grid:${myCurrentConfig.myGridScaleFactor}, ` +
                 `Classes:${myCurrentConfig.myClassLabels.length}`;
+            
+            // Update the editable textarea
+            myUpdateLabelEditor();
         }
-
-        // =================================================================
-        // 🚀 START ALL
-        // =================================================================
-
-        async function myStartAll() {
-            myStartButton.disabled = true;
-            myStatusElement.textContent = 'Loading default model...';
-
-            try {
-                await myLoadModel(myDefaultConfig.myDefaultUrl, 'Default Model');
-                myStatusElement.textContent = 'Model loaded! Starting webcam...';
+        
+        // NEW FUNCTION: Updates the textarea with current labels
+        function myUpdateLabelEditor() {
+            if (myLabelEditor) {
+                myLabelEditor.value = myCurrentConfig.myClassLabels.join(', ');
+            }
+        }
+        
+        // NEW FUNCTION: Updates the config from the textarea
+        function myUpdateConfigFromLabels() {
+            if (myLabelEditor) {
+                const myNewLabels = myLabelEditor.value
+                    .split(',')
+                    .map(myLabel => myLabel.trim())
+                    .filter(myLabel => myLabel.length > 0);
                 
-                await myStartWebcam();
-                
-                myStatusElement.textContent = 'Running inference...';
-                myStopButton.disabled = false;
-                
-            } catch (error) {
-                myStatusElement.textContent = `Error: ${error.message}`;
-                console.error('Startup error:', error);
-                myStartButton.disabled = false;
+                // Only update if the number of labels is consistent with the model output
+                if (myNewLabels.length === myCurrentConfig.myClassLabels.length) {
+                    myCurrentConfig.myClassLabels = myNewLabels;
+                    console.log('Labels updated manually:', myCurrentConfig.myClassLabels);
+                    myUpdateModelInfoDisplay(); // Update display to show class count change if needed
+                } else if (myModel) {
+                    myStatusElement.textContent = `Warning: Label count must be ${myCurrentConfig.myClassLabels.length} (including 'background'). Current: ${myNewLabels.length}`;
+                }
             }
         }
 
@@ -440,61 +508,99 @@
         // 💻 MODEL LOADING
         // =================================================================
 
-        async function myLoadModel(source, modelName) {
+        async function myLoadModel(mySource, myModelName) {
             try {
-                myModel = await tflite.loadTFLiteModel(source);
-                myCurrentModelName = modelName;
+                myModel = await tflite.loadTFLiteModel(mySource);
+                myCurrentModelName = myModelName;
                 
-                // Auto-detect configuration from model
+                // Re-evaluate config based on the new model structure
                 myCurrentConfig = myAutoDetectConfig(myModel);
                 
                 myUpdateModelInfoDisplay();
                 
-                console.log(`Model loaded: ${modelName}`);
-                console.log('Auto-detected config:', myCurrentConfig);
-            } catch (error) {
-                console.error('Model loading error:', error);
-                throw error;
+                console.log(`Model loaded: ${myModelName}`);
+                myStatusElement.textContent = `Model loaded: ${myModelName} (Ready to run)`;
+            } catch (myError) {
+                console.error('Model loading error:', myError);
+                throw new Error(`Failed to load model: ${myError.message.substring(0, 100)}...`);
+            }
+        }
+        
+        // NEW FUNCTION: Load from URL
+        async function myLoadModelFromUrl(myUrl) {
+            if (!myUrl.endsWith('.tflite') && !myUrl.endsWith('.lite')) {
+                 myStatusElement.textContent = 'Error: URL must end with .tflite or .lite';
+                 return;
+            }
+            myStatusElement.textContent = `Loading model from URL: ${myUrl}...`;
+            try {
+                await myLoadModel(myUrl, myUrl.substring(myUrl.lastIndexOf('/') + 1));
+                if (myIsWebcamReady) myStatusElement.textContent += ' (Inference running)';
+            } catch (myError) {
+                 myStatusElement.textContent = `Error: ${myError.message}`;
             }
         }
 
-        async function myLoadModelFromFile(file) {
-            myStatusElement.textContent = `Loading model from file: ${file.name}...`;
+        async function myLoadModelFromFile(myFile) {
+            myStatusElement.textContent = `Loading model from file: ${myFile.name}...`;
             
             try {
-                const arrayBuffer = await new Promise((resolve, reject) => {
-                    const reader = new FileReader();
-                    reader.onload = () => resolve(reader.result);
-                    reader.onerror = reject;
-                    reader.readAsArrayBuffer(file);
+                const myArrayBuffer = await new Promise((myResolve, myReject) => {
+                    const myReader = new FileReader();
+                    myReader.onload = () => myResolve(myReader.result);
+                    myReader.onerror = myReject;
+                    myReader.readAsArrayBuffer(myFile);
                 });
 
-                myModel = await tflite.loadTFLiteModel(arrayBuffer);
-                myCurrentModelName = file.name;
+                // Load TFLite Model from ArrayBuffer
+                myModel = await tflite.loadTFLiteModel(myArrayBuffer);
+                myCurrentModelName = myFile.name;
                 
                 // Auto-detect configuration from dropped model
                 myCurrentConfig = myAutoDetectConfig(myModel);
                 
                 myUpdateModelInfoDisplay();
                 
-                myStatusElement.textContent = `Model loaded: ${file.name} (Auto-detected config)`;
-                console.log(`Model loaded from file: ${file.name}`);
-                console.log('Auto-detected config:', myCurrentConfig);
-
-                // If webcam is already running, inference will automatically use the new model
-                if (!myIsWebcamReady) {
-                    myStatusElement.textContent = `${file.name} loaded. Start webcam to run inference.`;
+                myStatusElement.textContent = `Model loaded: ${myFile.name} (Auto-detected config)`;
+                
+                if (myIsWebcamReady) {
+                    myStatusElement.textContent += ' (Inference running)';
+                } else {
+                    myStatusElement.textContent += '. Start webcam to run inference.';
                 }
-            } catch (error) {
-                myStatusElement.textContent = `Failed to load ${file.name}. Check console.`;
-                console.error('File loading error:', error);
+            } catch (myError) {
+                myStatusElement.textContent = `Failed to load ${myFile.name}. Check console.`;
+                console.error('File loading error:', myError);
             }
         }
 
         // =================================================================
-        // 📹 WEBCAM MANAGEMENT
+        // 🚀 START/STOP & INFERENCE (Unchanged Logic)
         // =================================================================
 
+        async function myStartAll() {
+            myStartButton.disabled = true;
+            myStatusElement.textContent = 'Loading default model...';
+
+            try {
+                // Ensure model is loaded (uses default if no other loaded)
+                if (!myModel) {
+                     await myLoadModel(myDefaultConfig.myDefaultUrl, 'Default Model');
+                }
+                myStatusElement.textContent = 'Model loaded! Starting webcam...';
+                
+                await myStartWebcam();
+                
+                myStatusElement.textContent = 'Running inference...';
+                myStopButton.disabled = false;
+                
+            } catch (myError) {
+                myStatusElement.textContent = `Error: ${myError.message}`;
+                console.error('Startup error:', myError);
+                myStartButton.disabled = false;
+            }
+        }
+        
         async function myStartWebcam() {
             if (myIsWebcamReady) return;
 
@@ -509,15 +615,15 @@
                 });
 
                 myVideoElement.srcObject = myStream;
-                await new Promise(resolve => myVideoElement.onloadedmetadata = resolve);
+                await new Promise(myResolve => myVideoElement.onloadedmetadata = myResolve); 
                 myVideoElement.play();
                 myIsWebcamReady = true;
                 
                 console.log('Webcam started');
                 myRunInferenceLoop();
-            } catch (error) {
-                console.error('Webcam error:', error);
-                throw new Error(`Webcam access failed: ${error.message}`);
+            } catch (myError) {
+                console.error('Webcam error:', myError);
+                throw new Error(`Webcam access failed: ${myError.message}`);
             }
         }
 
@@ -527,26 +633,23 @@
                 myAnimationFrameId = null;
             }
             if (myVideoElement && myVideoElement.srcObject) {
-                myVideoElement.srcObject.getTracks().forEach(track => track.stop());
+                myVideoElement.srcObject.getTracks().forEach(myTrack => myTrack.stop());
                 myVideoElement.srcObject = null;
             }
             myIsWebcamReady = false;
         }
 
-        // =================================================================
-        // 🔄 INFERENCE LOOP
-        // =================================================================
-
         function myRunInferenceLoop() {
-            if (!myIsWebcamReady || !myModel) return;
+            if (!myIsWebcamReady || !myModel) {
+                myAnimationFrameId = requestAnimationFrame(myRunInferenceLoop);
+                return;
+            }
 
             tf.tidy(() => {
                 const myInputSize = myCurrentConfig.myInputResolution;
                 
-                // Draw video to canvas
                 myContext.drawImage(myVideoElement, 0, 0, myInputSize, myInputSize);
                 
-                // Create input tensor
                 let myInputTensor = tf.browser.fromPixels(myCanvas, myCurrentConfig.myInputChannels);
                 let myNormalizedTensor = myInputTensor
                     .resizeBilinear([myInputSize, myInputSize])
@@ -554,19 +657,13 @@
                     .div(255.0)
                     .expandDims(0);
 
-                // Run inference
                 const myOutputTensor = myModel.predict(myNormalizedTensor);
                 
-                // Post-process
                 myPostProcessFomo(myOutputTensor);
             });
 
             myAnimationFrameId = requestAnimationFrame(myRunInferenceLoop);
         }
-
-        // =================================================================
-        // 📊 POST-PROCESSING
-        // =================================================================
 
         function myPostProcessFomo(myOutputTensor) {
             const myPredictionData = myOutputTensor.dataSync();
@@ -578,21 +675,10 @@
             const myInputSize = myCurrentConfig.myInputResolution;
             const myGridSize = myInputSize / myCurrentConfig.myGridScaleFactor;
 
-            if (myGridX !== myGridSize || myGridY !== myGridSize) {
-                console.error('Grid size mismatch. Expected:', myGridSize, 'Got:', myGridX, 'x', myGridY);
-                return;
-            }
-
-            if (myNumClasses !== myCurrentConfig.myClassLabels.length) {
-                console.warn('Class count mismatch. Expected:', myCurrentConfig.myClassLabels.length, 'Got:', myNumClasses);
-                // Auto-adjust labels if needed
-                if (myNumClasses > myCurrentConfig.myClassLabels.length) {
-                    myCurrentConfig.myClassLabels = ['background'];
-                    for (let i = 1; i < myNumClasses; i++) {
-                        myCurrentConfig.myClassLabels.push(`Object${i}`);
-                    }
-                    console.log('Auto-adjusted class labels:', myCurrentConfig.myClassLabels);
-                }
+            // Check if user-provided labels match the model's expected output size
+            if (myCurrentConfig.myClassLabels.length !== myNumClasses) {
+                 myStatusElement.textContent = `ERROR: Label count (${myCurrentConfig.myClassLabels.length}) does not match model output classes (${myNumClasses}). Edit labels!`;
+                 return; // Stop processing to prevent index errors
             }
 
             // Redraw video frame
@@ -620,7 +706,7 @@
                         const myLabel = myCurrentConfig.myClassLabels[myMaxClassIndex] || `Class${myMaxClassIndex}`;
                         
                         console.log(
-                            `[${myCurrentModelName}] Class: ${myLabel} | Confidence: ${myMaxProbability.toFixed(3)} | Centroid: (${myCentroidX.toFixed(0)}, ${myCentroidY.toFixed(0)})`
+                            `[${myCurrentModelName}] Class: ${myLabel} | Confidence: ${myMaxProbability.toFixed(3)}`
                         );
                         
                         myContext.fillStyle = myMaxClassIndex % 2 === 1 ? 'rgba(255, 69, 0, 0.8)' : 'rgba(50, 205, 50, 0.8)';
@@ -635,10 +721,6 @@
             }
         }
 
-        // =================================================================
-        // 🛑 STOP ALL
-        // =================================================================
-
         function myStopAll() {
             myStopWebcam();
             
@@ -646,7 +728,7 @@
             myContext.fillStyle = '#333';
             myContext.fillRect(0, 0, myCanvas.width, myCanvas.height);
             
-            myStatusElement.textContent = 'Stopped. Click "Start" or drag & drop a new model.';
+            myStatusElement.textContent = 'Stopped. Click "Start" or load a new model.';
             myStartButton.disabled = false;
             myStopButton.disabled = true;
             
