@@ -1,0 +1,657 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>FOMO Detector - Auto-Detect</title>
+
+    <style>
+        body { 
+            font-family: 'Inter', sans-serif;
+            margin: 20px; 
+            background-color: #f0f4f8;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+        #myMainContainer {
+            max-width: 800px;
+            width: 100%;
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 6px 15px rgba(0, 0, 0, 0.15);
+        }
+        h1 {
+            text-align: center;
+            color: #3c4043;
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+        #myInstructions {
+            text-align: center;
+            color: #5f6368;
+            margin-bottom: 20px;
+            font-size: 0.95em;
+        }
+        #myVideo { 
+            display: none; 
+        }
+        .myButton {
+            background-color: #1a73e8; 
+            color: white; 
+            padding: 12px 24px; 
+            border: none; 
+            border-radius: 8px; 
+            cursor: pointer; 
+            font-size: 16px; 
+            margin: 5px;
+            transition: background-color 0.3s, transform 0.1s;
+            font-weight: 600;
+        }
+        .myButton:hover { 
+            background-color: #155cb8; 
+        }
+        .myButton:active {
+            transform: translateY(1px);
+        }
+        .myButton:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .myButton.stop {
+            background-color: #d93025;
+        }
+        .myButton.stop:hover {
+            background-color: #b02419;
+        }
+        #myControlSection {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        #myStatusMessage {
+            font-size: 1em;
+            margin: 15px 0;
+            color: #3c4043;
+            font-weight: 500;
+            text-align: center;
+            padding: 12px;
+            background-color: #e6f7ff;
+            border: 1px solid #90caff;
+            border-radius: 8px;
+        }
+        #myCanvasContainer {
+            position: relative;
+            text-align: center;
+            margin-top: 20px;
+        }
+        #myCanvas { 
+            border: 3px solid #1a73e8;
+            border-radius: 8px; 
+            background-color: #333; 
+            width: 100%; 
+            height: auto;
+            max-width: 600px; 
+            aspect-ratio: 1 / 1;
+            display: block;
+            margin: 0 auto;
+            transition: border-color 0.3s;
+        }
+        #myCanvas.drag-over {
+            border-color: #0f9d58;
+            border-style: dashed;
+            border-width: 4px;
+            background-color: #e8f5e9;
+        }
+        #myDropOverlay {
+            position: absolute;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 100%;
+            max-width: 600px;
+            height: 100%;
+            background-color: rgba(15, 157, 88, 0.1);
+            border: 4px dashed #0f9d58;
+            border-radius: 8px;
+            display: none;
+            justify-content: center;
+            align-items: center;
+            pointer-events: none;
+        }
+        #myDropOverlay.active {
+            display: flex;
+        }
+        #myDropText {
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #0f9d58;
+            background-color: white;
+            padding: 20px 40px;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        }
+        .myModelInfo {
+            text-align: center;
+            margin-top: 15px;
+            padding: 12px;
+            background-color: #f8f9fa;
+            border-radius: 8px;
+            border: 1px solid #dee2e6;
+        }
+        .myInfoLabel {
+            font-size: 0.85em;
+            color: #6c757d;
+            font-weight: 600;
+            display: block;
+            margin-bottom: 5px;
+        }
+        .myInfoValue {
+            font-size: 0.95em;
+            color: #212529;
+            font-family: monospace;
+        }
+    </style>
+    
+    <!-- TensorFlow Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@0.0.1-alpha.9/dist/tf-tflite.min.js"></script>
+</head>
+<body>
+
+    <script>
+        // =================================================================
+        // 🚀 DEFAULT CONFIGURATION (Fallback values)
+        // =================================================================
+        const myDefaultConfig = {
+            myDefaultUrl: 'https://hpssjellis.github.io/my-examples-of-edge-impulse/public/tflite/fomo01.tflite',
+            myInputResolution: 240,
+            myGridScaleFactor: 8,
+            myConfidenceThreshold: 0.5,
+            myClassLabels: ['background', 'Eyes'],
+            myInputChannels: 3,
+        };
+
+        // =================================================================
+        // ⚙️ GLOBAL VARIABLES 
+        // =================================================================
+        let myVideoElement = null;
+        let myIsWebcamReady = false;
+        let myAnimationFrameId = null;
+        let myStatusElement = null;
+        let myStartButton = null;
+        let myStopButton = null;
+        let myCanvas = null;
+        let myContext = null;
+        let myDropOverlay = null;
+        let myModelInfo = null;
+        
+        let myModel = null;
+        let myCurrentConfig = {...myDefaultConfig};
+        let myCurrentModelName = 'Default Model';
+
+        // =================================================================
+        // 🏠 HTML SETUP
+        // =================================================================
+        
+        function myCreateDOM() {
+            const myMainContainer = document.createElement('div');
+            myMainContainer.id = 'myMainContainer';
+            
+            const myTitle = document.createElement('h1');
+            myTitle.textContent = 'FOMO Detector';
+            myMainContainer.appendChild(myTitle);
+
+            const myInstructions = document.createElement('div');
+            myInstructions.id = 'myInstructions';
+            myInstructions.innerHTML = 'Drag & drop a .tflite FOMO model onto the canvas<br><small>Auto-detects resolution, channels, and output classes</small>';
+            myMainContainer.appendChild(myInstructions);
+
+            // Control section
+            const myControlSection = document.createElement('div');
+            myControlSection.id = 'myControlSection';
+            
+            myStatusElement = document.createElement('div');
+            myStatusElement.id = 'myStatusMessage';
+            myStatusElement.textContent = 'Click "Start" to begin';
+            myControlSection.appendChild(myStatusElement);
+
+            myStartButton = document.createElement('button');
+            myStartButton.className = 'myButton';
+            myStartButton.textContent = 'Start Webcam & Load Default Model';
+            myStartButton.onclick = myStartAll;
+            myControlSection.appendChild(myStartButton);
+
+            myStopButton = document.createElement('button');
+            myStopButton.className = 'myButton stop';
+            myStopButton.textContent = 'Stop Webcam';
+            myStopButton.onclick = myStopAll;
+            myStopButton.disabled = true;
+            myControlSection.appendChild(myStopButton);
+
+            myMainContainer.appendChild(myControlSection);
+
+            // Hidden video element
+            myVideoElement = document.createElement('video');
+            myVideoElement.id = 'myVideo';
+            myVideoElement.setAttribute('playsinline', '');
+            myVideoElement.setAttribute('autoplay', '');
+            myMainContainer.appendChild(myVideoElement);
+
+            // Canvas container with drop overlay
+            const myCanvasContainer = document.createElement('div');
+            myCanvasContainer.id = 'myCanvasContainer';
+
+            myCanvas = document.createElement('canvas');
+            myCanvas.id = 'myCanvas';
+            myCanvas.width = myCurrentConfig.myInputResolution;
+            myCanvas.height = myCurrentConfig.myInputResolution;
+            myContext = myCanvas.getContext('2d');
+            myCanvasContainer.appendChild(myCanvas);
+
+            // Drop overlay
+            myDropOverlay = document.createElement('div');
+            myDropOverlay.id = 'myDropOverlay';
+            const myDropText = document.createElement('div');
+            myDropText.id = 'myDropText';
+            myDropText.textContent = 'Drop .tflite file here';
+            myDropOverlay.appendChild(myDropText);
+            myCanvasContainer.appendChild(myDropOverlay);
+
+            myMainContainer.appendChild(myCanvasContainer);
+
+            // Model info display
+            myModelInfo = document.createElement('div');
+            myModelInfo.className = 'myModelInfo';
+            myModelInfo.innerHTML = `
+                <span class="myInfoLabel">Model:</span>
+                <span class="myInfoValue" id="myModelName">No model loaded</span><br>
+                <span class="myInfoLabel">Config:</span>
+                <span class="myInfoValue" id="myModelConfig">N/A</span>
+            `;
+            myMainContainer.appendChild(myModelInfo);
+
+            document.body.appendChild(myMainContainer);
+
+            // Setup drag and drop
+            mySetupDragAndDrop();
+        }
+
+        window.onload = myCreateDOM;
+
+        // =================================================================
+        // 🎯 DRAG AND DROP SETUP
+        // =================================================================
+
+        function mySetupDragAndDrop() {
+            // Prevent default drag behaviors on the whole document
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(eventName => {
+                document.body.addEventListener(eventName, preventDefaults, false);
+            });
+
+            function preventDefaults(e) {
+                e.preventDefault();
+                e.stopPropagation();
+            }
+
+            // Highlight canvas on drag over
+            ['dragenter', 'dragover'].forEach(eventName => {
+                myCanvas.addEventListener(eventName, () => {
+                    myCanvas.classList.add('drag-over');
+                    myDropOverlay.classList.add('active');
+                }, false);
+            });
+
+            ['dragleave', 'drop'].forEach(eventName => {
+                myCanvas.addEventListener(eventName, () => {
+                    myCanvas.classList.remove('drag-over');
+                    myDropOverlay.classList.remove('active');
+                }, false);
+            });
+
+            // Handle drop
+            myCanvas.addEventListener('drop', handleDrop, false);
+        }
+
+        function handleDrop(e) {
+            const dt = e.dataTransfer;
+            const files = dt.files;
+
+            if (files.length > 0) {
+                const file = files[0];
+                if (file.name.endsWith('.tflite')) {
+                    myLoadModelFromFile(file);
+                } else {
+                    myStatusElement.textContent = 'Error: Please drop a .tflite file';
+                }
+            }
+        }
+
+        // =================================================================
+        // 🔍 AUTO-DETECT MODEL CONFIGURATION
+        // =================================================================
+
+        function myAutoDetectConfig(model) {
+            try {
+                const detectedConfig = {...myDefaultConfig};
+                
+                // Auto-detect from model inputs
+                if (model.inputs && model.inputs.length > 0) {
+                    const input = model.inputs[0];
+                    console.log('Model input:', input);
+                    
+                    // Detect resolution (assuming square input: [batch, height, width, channels])
+                    if (input.shape && input.shape.length === 4) {
+                        const height = input.shape[1];
+                        const width = input.shape[2];
+                        const channels = input.shape[3];
+                        
+                        if (height === width && height > 0) {
+                            detectedConfig.myInputResolution = height;
+                            console.log(`✓ Detected resolution: ${height}x${width}`);
+                        }
+                        
+                        if (channels === 1 || channels === 3) {
+                            detectedConfig.myInputChannels = channels;
+                            console.log(`✓ Detected channels: ${channels} (${channels === 1 ? 'Grayscale' : 'RGB'})`);
+                        }
+                    }
+                }
+                
+                // Auto-detect from model outputs (FOMO specific)
+                if (model.outputs && model.outputs.length > 0) {
+                    const output = model.outputs[0];
+                    console.log('Model output:', output);
+                    
+                    // FOMO output shape: [batch, grid_h, grid_w, num_classes]
+                    if (output.shape && output.shape.length === 4) {
+                        const gridH = output.shape[1];
+                        const gridW = output.shape[2];
+                        const numClasses = output.shape[3];
+                        
+                        if (gridH === gridW && gridH > 0) {
+                            // Calculate grid scale factor
+                            const calculatedFactor = detectedConfig.myInputResolution / gridH;
+                            if (calculatedFactor > 0 && Number.isInteger(calculatedFactor)) {
+                                detectedConfig.myGridScaleFactor = calculatedFactor;
+                                console.log(`✓ Detected grid scale factor: ${calculatedFactor} (${detectedConfig.myInputResolution}/${gridH})`);
+                            }
+                        }
+                        
+                        if (numClasses > 0) {
+                            // Generate class labels: background + Object1, Object2, etc.
+                            detectedConfig.myClassLabels = ['background'];
+                            for (let i = 1; i < numClasses; i++) {
+                                detectedConfig.myClassLabels.push(`Object${i}`);
+                            }
+                            console.log(`✓ Detected ${numClasses} classes:`, detectedConfig.myClassLabels);
+                        }
+                    }
+                }
+                
+                // Update canvas size
+                myCanvas.width = detectedConfig.myInputResolution;
+                myCanvas.height = detectedConfig.myInputResolution;
+                
+                return detectedConfig;
+                
+            } catch (error) {
+                console.error('Auto-detection error:', error);
+                console.log('Falling back to default config');
+                return {...myDefaultConfig};
+            }
+        }
+
+        function myUpdateModelInfoDisplay() {
+            document.getElementById('myModelName').textContent = myCurrentModelName;
+            document.getElementById('myModelConfig').textContent = 
+                `${myCurrentConfig.myInputResolution}x${myCurrentConfig.myInputResolution}, ` +
+                `${myCurrentConfig.myInputChannels === 3 ? 'RGB' : 'Grayscale'}, ` +
+                `Grid:${myCurrentConfig.myGridScaleFactor}, ` +
+                `Classes:${myCurrentConfig.myClassLabels.length}`;
+        }
+
+        // =================================================================
+        // 🚀 START ALL
+        // =================================================================
+
+        async function myStartAll() {
+            myStartButton.disabled = true;
+            myStatusElement.textContent = 'Loading default model...';
+
+            try {
+                await myLoadModel(myDefaultConfig.myDefaultUrl, 'Default Model');
+                myStatusElement.textContent = 'Model loaded! Starting webcam...';
+                
+                await myStartWebcam();
+                
+                myStatusElement.textContent = 'Running inference...';
+                myStopButton.disabled = false;
+                
+            } catch (error) {
+                myStatusElement.textContent = `Error: ${error.message}`;
+                console.error('Startup error:', error);
+                myStartButton.disabled = false;
+            }
+        }
+
+        // =================================================================
+        // 💻 MODEL LOADING
+        // =================================================================
+
+        async function myLoadModel(source, modelName) {
+            try {
+                myModel = await tflite.loadTFLiteModel(source);
+                myCurrentModelName = modelName;
+                
+                // Auto-detect configuration from model
+                myCurrentConfig = myAutoDetectConfig(myModel);
+                
+                myUpdateModelInfoDisplay();
+                
+                console.log(`Model loaded: ${modelName}`);
+                console.log('Auto-detected config:', myCurrentConfig);
+            } catch (error) {
+                console.error('Model loading error:', error);
+                throw error;
+            }
+        }
+
+        async function myLoadModelFromFile(file) {
+            myStatusElement.textContent = `Loading model from file: ${file.name}...`;
+            
+            try {
+                const arrayBuffer = await new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(reader.result);
+                    reader.onerror = reject;
+                    reader.readAsArrayBuffer(file);
+                });
+
+                myModel = await tflite.loadTFLiteModel(arrayBuffer);
+                myCurrentModelName = file.name;
+                
+                // Auto-detect configuration from dropped model
+                myCurrentConfig = myAutoDetectConfig(myModel);
+                
+                myUpdateModelInfoDisplay();
+                
+                myStatusElement.textContent = `Model loaded: ${file.name} (Auto-detected config)`;
+                console.log(`Model loaded from file: ${file.name}`);
+                console.log('Auto-detected config:', myCurrentConfig);
+
+                // If webcam is already running, inference will automatically use the new model
+                if (!myIsWebcamReady) {
+                    myStatusElement.textContent = `${file.name} loaded. Start webcam to run inference.`;
+                }
+            } catch (error) {
+                myStatusElement.textContent = `Failed to load ${file.name}. Check console.`;
+                console.error('File loading error:', error);
+            }
+        }
+
+        // =================================================================
+        // 📹 WEBCAM MANAGEMENT
+        // =================================================================
+
+        async function myStartWebcam() {
+            if (myIsWebcamReady) return;
+
+            try {
+                const myStream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        width: 640,
+                        height: 640,
+                        facingMode: 'user'
+                    },
+                    audio: false
+                });
+
+                myVideoElement.srcObject = myStream;
+                await new Promise(resolve => myVideoElement.onloadedmetadata = resolve);
+                myVideoElement.play();
+                myIsWebcamReady = true;
+                
+                console.log('Webcam started');
+                myRunInferenceLoop();
+            } catch (error) {
+                console.error('Webcam error:', error);
+                throw new Error(`Webcam access failed: ${error.message}`);
+            }
+        }
+
+        function myStopWebcam() {
+            if (myAnimationFrameId) {
+                cancelAnimationFrame(myAnimationFrameId);
+                myAnimationFrameId = null;
+            }
+            if (myVideoElement && myVideoElement.srcObject) {
+                myVideoElement.srcObject.getTracks().forEach(track => track.stop());
+                myVideoElement.srcObject = null;
+            }
+            myIsWebcamReady = false;
+        }
+
+        // =================================================================
+        // 🔄 INFERENCE LOOP
+        // =================================================================
+
+        function myRunInferenceLoop() {
+            if (!myIsWebcamReady || !myModel) return;
+
+            tf.tidy(() => {
+                const myInputSize = myCurrentConfig.myInputResolution;
+                
+                // Draw video to canvas
+                myContext.drawImage(myVideoElement, 0, 0, myInputSize, myInputSize);
+                
+                // Create input tensor
+                let myInputTensor = tf.browser.fromPixels(myCanvas, myCurrentConfig.myInputChannels);
+                let myNormalizedTensor = myInputTensor
+                    .resizeBilinear([myInputSize, myInputSize])
+                    .cast('float32')
+                    .div(255.0)
+                    .expandDims(0);
+
+                // Run inference
+                const myOutputTensor = myModel.predict(myNormalizedTensor);
+                
+                // Post-process
+                myPostProcessFomo(myOutputTensor);
+            });
+
+            myAnimationFrameId = requestAnimationFrame(myRunInferenceLoop);
+        }
+
+        // =================================================================
+        // 📊 POST-PROCESSING
+        // =================================================================
+
+        function myPostProcessFomo(myOutputTensor) {
+            const myPredictionData = myOutputTensor.dataSync();
+            const myOutputShape = myOutputTensor.shape;
+            const myNumClasses = myOutputShape[3];
+            const myGridX = myOutputShape[1];
+            const myGridY = myOutputShape[2];
+
+            const myInputSize = myCurrentConfig.myInputResolution;
+            const myGridSize = myInputSize / myCurrentConfig.myGridScaleFactor;
+
+            if (myGridX !== myGridSize || myGridY !== myGridSize) {
+                console.error('Grid size mismatch. Expected:', myGridSize, 'Got:', myGridX, 'x', myGridY);
+                return;
+            }
+
+            if (myNumClasses !== myCurrentConfig.myClassLabels.length) {
+                console.warn('Class count mismatch. Expected:', myCurrentConfig.myClassLabels.length, 'Got:', myNumClasses);
+                // Auto-adjust labels if needed
+                if (myNumClasses > myCurrentConfig.myClassLabels.length) {
+                    myCurrentConfig.myClassLabels = ['background'];
+                    for (let i = 1; i < myNumClasses; i++) {
+                        myCurrentConfig.myClassLabels.push(`Object${i}`);
+                    }
+                    console.log('Auto-adjusted class labels:', myCurrentConfig.myClassLabels);
+                }
+            }
+
+            // Redraw video frame
+            myContext.drawImage(myVideoElement, 0, 0, myInputSize, myInputSize);
+
+            // Process grid
+            for (let i = 0; i < myGridSize; i++) {
+                for (let j = 0; j < myGridSize; j++) {
+                    const myCellStartIndex = (i * myGridSize * myNumClasses) + (j * myNumClasses);
+
+                    let myMaxProbability = 0;
+                    let myMaxClassIndex = 0;
+
+                    for (let k = 0; k < myNumClasses; k++) {
+                        const myProbability = myPredictionData[myCellStartIndex + k];
+                        if (myProbability > myMaxProbability) {
+                            myMaxProbability = myProbability;
+                            myMaxClassIndex = k;
+                        }
+                    }
+
+                    if (myMaxClassIndex !== 0 && myMaxProbability >= myCurrentConfig.myConfidenceThreshold) {
+                        const myCentroidX = (j * myCurrentConfig.myGridScaleFactor) + (myCurrentConfig.myGridScaleFactor / 2);
+                        const myCentroidY = (i * myCurrentConfig.myGridScaleFactor) + (myCurrentConfig.myGridScaleFactor / 2);
+                        const myLabel = myCurrentConfig.myClassLabels[myMaxClassIndex] || `Class${myMaxClassIndex}`;
+                        
+                        console.log(
+                            `[${myCurrentModelName}] Class: ${myLabel} | Confidence: ${myMaxProbability.toFixed(3)} | Centroid: (${myCentroidX.toFixed(0)}, ${myCentroidY.toFixed(0)})`
+                        );
+                        
+                        myContext.fillStyle = myMaxClassIndex % 2 === 1 ? 'rgba(255, 69, 0, 0.8)' : 'rgba(50, 205, 50, 0.8)';
+                        myContext.fillRect(myCentroidX - 5, myCentroidY - 5, 10, 10);
+                        
+                        myContext.font = '12px Arial';
+                        myContext.fillStyle = 'white';
+                        myContext.textAlign = 'center';
+                        myContext.fillText(myLabel, myCentroidX, myCentroidY - 8);
+                    }
+                }
+            }
+        }
+
+        // =================================================================
+        // 🛑 STOP ALL
+        // =================================================================
+
+        function myStopAll() {
+            myStopWebcam();
+            
+            myContext.clearRect(0, 0, myCanvas.width, myCanvas.height);
+            myContext.fillStyle = '#333';
+            myContext.fillRect(0, 0, myCanvas.width, myCanvas.height);
+            
+            myStatusElement.textContent = 'Stopped. Click "Start" or drag & drop a new model.';
+            myStartButton.disabled = false;
+            myStopButton.disabled = true;
+            
+            console.log('Stopped');
+        }
+    </script>
+</body>
+</html>
