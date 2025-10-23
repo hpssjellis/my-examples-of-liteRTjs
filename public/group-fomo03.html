@@ -1,0 +1,491 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quad FOMO Detector - Production</title>
+
+    <!-- Minimal, Simple CSS -->
+    <style>
+        body { 
+            font-family: 'Inter', sans-serif;
+            margin: 20px; 
+            background-color: #f0f4f8;
+        }
+        #myMainContainer {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        h1 {
+            text-align: center;
+            color: #3c4043;
+            font-size: 2em;
+            margin-bottom: 20px;
+        }
+        #myWebcamSection {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 6px 15px rgba(0, 0, 0, 0.15);
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        #myVideo { 
+            display: none; 
+        }
+        .myGlobalButton {
+            background-color: #1a73e8; 
+            color: white; 
+            padding: 15px 30px; 
+            border: none; 
+            border-radius: 8px; 
+            cursor: pointer; 
+            font-size: 18px; 
+            margin: 10px;
+            transition: background-color 0.3s, transform 0.1s;
+            font-weight: bold;
+        }
+        .myGlobalButton:hover { 
+            background-color: #155cb8; 
+        }
+        .myGlobalButton:active {
+            transform: translateY(1px);
+        }
+        .myGlobalButton:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .myGlobalButton.stop {
+            background-color: #d93025;
+        }
+        .myGlobalButton.stop:hover {
+            background-color: #b02419;
+        }
+        #myStatusMessage {
+            font-size: 1.1em;
+            margin-bottom: 20px;
+            color: #3c4043;
+            font-weight: 500;
+        }
+        #myCanvasGrid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 6px 15px rgba(0, 0, 0, 0.15);
+        }
+        .myCanvasContainer {
+            text-align: center;
+        }
+        .myCanvasLabel {
+            font-size: 1.2em;
+            font-weight: bold;
+            color: #1a73e8;
+            margin-bottom: 10px;
+        }
+        .myCanvasStatus {
+            font-size: 0.9em;
+            color: #5f6368;
+            margin-bottom: 10px;
+            min-height: 20px;
+        }
+        .myCanvas { 
+            border: 3px solid #1a73e8;
+            border-radius: 8px; 
+            background-color: #333; 
+            width: 100%; 
+            height: auto;
+            max-width: 500px; 
+            aspect-ratio: 1 / 1;
+            display: block;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        @media (max-width: 1000px) {
+            #myCanvasGrid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+    
+    <!-- TensorFlow Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@0.0.1-alpha.9/dist/tf-tflite.min.js"></script>
+</head>
+<body>
+
+    <script>
+        // =================================================================
+        // 🚀 CONFIGURATION FOR 4 MODELS (EDIT THESE VALUES)
+        // =================================================================
+        const myModelsConfig = [
+            {
+                id: 1,
+                name: 'Model 1',
+                myDefaultUrl: 'https://hpssjellis.github.io/my-examples-of-edge-impulse/public/tflite/fomo01.tflite',
+                myInputResolution: 240,
+                myGridScaleFactor: 8,
+                myConfidenceThreshold: 0.5,
+                myClassLabels: ['background', 'Eyes'],
+                myInputChannels: 3,
+            },
+            {
+                id: 2,
+                name: 'Model 2',
+                myDefaultUrl: 'https://hpssjellis.github.io/my-examples-of-edge-impulse/public/tflite/fomo01.tflite',
+                myInputResolution: 240,
+                myGridScaleFactor: 8,
+                myConfidenceThreshold: 0.5,
+                myClassLabels: ['background', 'Object'],
+                myInputChannels: 3,
+            },
+            {
+                id: 3,
+                name: 'Model 3',
+                myDefaultUrl: 'https://hpssjellis.github.io/my-examples-of-edge-impulse/public/tflite/fomo01.tflite',
+                myInputResolution: 240,
+                myGridScaleFactor: 8,
+                myConfidenceThreshold: 0.5,
+                myClassLabels: ['background', 'Object'],
+                myInputChannels: 3,
+            },
+            {
+                id: 4,
+                name: 'Model 4',
+                myDefaultUrl: 'https://hpssjellis.github.io/my-examples-of-edge-impulse/public/tflite/fomo01.tflite',
+                myInputResolution: 240,
+                myGridScaleFactor: 8,
+                myConfidenceThreshold: 0.5,
+                myClassLabels: ['background', 'Object'],
+                myInputChannels: 3,
+            }
+        ];
+
+        // =================================================================
+        // ⚙️ GLOBAL VARIABLES 
+        // =================================================================
+        let myVideoElement = null;
+        let myIsWebcamReady = false;
+        let myAnimationFrameId = null;
+        let myStatusElement = null;
+        let myStartButton = null;
+        let myStopButton = null;
+        
+        // Array to hold state for each model
+        let myModelStates = [];
+
+        // =================================================================
+        // 🏠 HTML SETUP
+        // =================================================================
+        
+        function myCreateDOM() {
+            const myMainContainer = document.createElement('div');
+            myMainContainer.id = 'myMainContainer';
+            
+            const myTitle = document.createElement('h1');
+            myTitle.textContent = 'Quad FOMO Detector';
+            myMainContainer.appendChild(myTitle);
+
+            // Webcam control section
+            const myWebcamSection = document.createElement('div');
+            myWebcamSection.id = 'myWebcamSection';
+            
+            myStatusElement = document.createElement('div');
+            myStatusElement.id = 'myStatusMessage';
+            myStatusElement.textContent = 'Click "Start" to begin webcam and load all models';
+            myWebcamSection.appendChild(myStatusElement);
+
+            myStartButton = document.createElement('button');
+            myStartButton.className = 'myGlobalButton';
+            myStartButton.textContent = 'Start Webcam & Load Models';
+            myStartButton.onclick = myStartAll;
+            myWebcamSection.appendChild(myStartButton);
+
+            myStopButton = document.createElement('button');
+            myStopButton.className = 'myGlobalButton stop';
+            myStopButton.textContent = 'Stop Webcam';
+            myStopButton.onclick = myStopAll;
+            myStopButton.disabled = true;
+            myWebcamSection.appendChild(myStopButton);
+
+            myMainContainer.appendChild(myWebcamSection);
+
+            // Hidden video element
+            myVideoElement = document.createElement('video');
+            myVideoElement.id = 'myVideo';
+            myVideoElement.setAttribute('playsinline', '');
+            myVideoElement.setAttribute('autoplay', '');
+            myMainContainer.appendChild(myVideoElement);
+
+            // Canvas grid
+            const myCanvasGrid = document.createElement('div');
+            myCanvasGrid.id = 'myCanvasGrid';
+
+            // Create state and UI for each model
+            myModelsConfig.forEach((config, index) => {
+                const state = myCreateModelState(config, index);
+                myModelStates.push(state);
+
+                const myCanvasContainer = document.createElement('div');
+                myCanvasContainer.className = 'myCanvasContainer';
+
+                const myCanvasLabel = document.createElement('div');
+                myCanvasLabel.className = 'myCanvasLabel';
+                myCanvasLabel.textContent = config.name;
+                myCanvasContainer.appendChild(myCanvasLabel);
+
+                state.statusElement = document.createElement('div');
+                state.statusElement.className = 'myCanvasStatus';
+                state.statusElement.textContent = 'Waiting to start...';
+                myCanvasContainer.appendChild(state.statusElement);
+
+                myCanvasContainer.appendChild(state.canvas);
+                myCanvasGrid.appendChild(myCanvasContainer);
+            });
+
+            myMainContainer.appendChild(myCanvasGrid);
+            document.body.appendChild(myMainContainer);
+        }
+
+        function myCreateModelState(config, index) {
+            const state = {
+                config: {...config},
+                model: null,
+                canvas: null,
+                context: null,
+                statusElement: null,
+            };
+
+            // Create canvas
+            state.canvas = document.createElement('canvas');
+            state.canvas.className = 'myCanvas';
+            state.canvas.width = config.myInputResolution;
+            state.canvas.height = config.myInputResolution;
+            state.context = state.canvas.getContext('2d');
+
+            return state;
+        }
+
+        window.onload = myCreateDOM;
+
+        // =================================================================
+        // 🚀 START ALL - LOAD MODELS AND START WEBCAM
+        // =================================================================
+
+        async function myStartAll() {
+            myStartButton.disabled = true;
+            myStatusElement.textContent = 'Loading models...';
+
+            // Load all models
+            let loadPromises = myModelStates.map((state, index) => myLoadModel(state, index));
+            
+            try {
+                await Promise.all(loadPromises);
+                myStatusElement.textContent = 'All models loaded! Starting webcam...';
+                
+                // Start webcam
+                await myStartWebcam();
+                
+                myStatusElement.textContent = 'Running inference on all models...';
+                myStopButton.disabled = false;
+                
+            } catch (error) {
+                myStatusElement.textContent = `Error: ${error.message}. Check console for details.`;
+                console.error('Startup error:', error);
+                myStartButton.disabled = false;
+            }
+        }
+
+        // =================================================================
+        // 💻 MODEL LOADING
+        // =================================================================
+
+        async function myLoadModel(state, index) {
+            const config = state.config;
+            state.statusElement.textContent = 'Loading...';
+            
+            try {
+                state.model = await tflite.loadTFLiteModel(config.myDefaultUrl);
+                state.statusElement.textContent = 'Model loaded';
+                console.log(`Model ${index + 1} (${config.name}) loaded successfully`);
+            } catch (error) {
+                state.statusElement.textContent = 'Load failed';
+                console.error(`Model ${index + 1} loading error:`, error);
+                throw error;
+            }
+        }
+
+        // =================================================================
+        // 📹 WEBCAM MANAGEMENT
+        // =================================================================
+
+        async function myStartWebcam() {
+            if (myIsWebcamReady) return;
+
+            try {
+                const myStream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        width: 640,
+                        height: 640,
+                        facingMode: 'user'
+                    },
+                    audio: false
+                });
+
+                myVideoElement.srcObject = myStream;
+                await new Promise(resolve => myVideoElement.onloadedmetadata = resolve);
+                myVideoElement.play();
+                myIsWebcamReady = true;
+                
+                // Update all status elements
+                myModelStates.forEach(state => {
+                    state.statusElement.textContent = 'Running...';
+                });
+                
+                console.log('Webcam started');
+                myRunInferenceLoop();
+            } catch (error) {
+                console.error('Webcam error:', error);
+                throw new Error(`Webcam access failed: ${error.message}`);
+            }
+        }
+
+        function myStopWebcam() {
+            if (myAnimationFrameId) {
+                cancelAnimationFrame(myAnimationFrameId);
+                myAnimationFrameId = null;
+            }
+            if (myVideoElement && myVideoElement.srcObject) {
+                myVideoElement.srcObject.getTracks().forEach(track => track.stop());
+                myVideoElement.srcObject = null;
+            }
+            myIsWebcamReady = false;
+        }
+
+        // =================================================================
+        // 🔄 INFERENCE LOOP
+        // =================================================================
+
+        function myRunInferenceLoop() {
+            if (!myIsWebcamReady) return;
+
+            // Process each model
+            myModelStates.forEach((state, index) => {
+                if (state.model) {
+                    tf.tidy(() => {
+                        const config = state.config;
+                        const myInputSize = config.myInputResolution;
+                        
+                        // Draw video to canvas
+                        state.context.drawImage(myVideoElement, 0, 0, myInputSize, myInputSize);
+                        
+                        // Create input tensor
+                        let myInputTensor = tf.browser.fromPixels(state.canvas, config.myInputChannels);
+                        let myNormalizedTensor = myInputTensor
+                            .resizeBilinear([myInputSize, myInputSize])
+                            .cast('float32')
+                            .div(255.0)
+                            .expandDims(0);
+
+                        // Run inference
+                        const myOutputTensor = state.model.predict(myNormalizedTensor);
+                        
+                        // Post-process
+                        myPostProcessFomo(state, myOutputTensor);
+                    });
+                }
+            });
+
+            myAnimationFrameId = requestAnimationFrame(myRunInferenceLoop);
+        }
+
+        // =================================================================
+        // 📊 POST-PROCESSING
+        // =================================================================
+
+        function myPostProcessFomo(state, myOutputTensor) {
+            const config = state.config;
+            const myPredictionData = myOutputTensor.dataSync();
+            const myOutputShape = myOutputTensor.shape;
+            const myNumClasses = myOutputShape[3];
+            const myGridX = myOutputShape[1];
+            const myGridY = myOutputShape[2];
+
+            const myInputSize = config.myInputResolution;
+            const myGridSize = myInputSize / config.myGridScaleFactor;
+
+            if (myGridX !== myGridSize || myGridY !== myGridSize) {
+                console.error(`Model ${state.config.name}: Grid size mismatch`);
+                return;
+            }
+
+            if (myNumClasses !== config.myClassLabels.length) {
+                console.error(`Model ${state.config.name}: Class count mismatch`);
+                return;
+            }
+
+            // Redraw video frame
+            state.context.drawImage(myVideoElement, 0, 0, myInputSize, myInputSize);
+
+            // Process grid
+            for (let i = 0; i < myGridSize; i++) {
+                for (let j = 0; j < myGridSize; j++) {
+                    const myCellStartIndex = (i * myGridSize * myNumClasses) + (j * myNumClasses);
+
+                    let myMaxProbability = 0;
+                    let myMaxClassIndex = 0;
+
+                    for (let k = 0; k < myNumClasses; k++) {
+                        const myProbability = myPredictionData[myCellStartIndex + k];
+                        if (myProbability > myMaxProbability) {
+                            myMaxProbability = myProbability;
+                            myMaxClassIndex = k;
+                        }
+                    }
+
+                    if (myMaxClassIndex !== 0 && myMaxProbability >= config.myConfidenceThreshold) {
+                        const myCentroidX = (j * config.myGridScaleFactor) + (config.myGridScaleFactor / 2);
+                        const myCentroidY = (i * config.myGridScaleFactor) + (config.myGridScaleFactor / 2);
+                        const myLabel = config.myClassLabels[myMaxClassIndex];
+                        
+                        console.log(
+                            `[${config.name}] Class: ${myLabel} | Confidence: ${myMaxProbability.toFixed(3)} | Centroid: (${myCentroidX.toFixed(0)}, ${myCentroidY.toFixed(0)})`
+                        );
+                        
+                        state.context.fillStyle = myMaxClassIndex % 2 === 1 ? 'rgba(255, 69, 0, 0.8)' : 'rgba(50, 205, 50, 0.8)';
+                        state.context.fillRect(myCentroidX - 4, myCentroidY - 4, 8, 8);
+                        
+                        state.context.font = '10px Arial';
+                        state.context.fillStyle = 'white';
+                        state.context.textAlign = 'center';
+                        state.context.fillText(myLabel, myCentroidX, myCentroidY - 6);
+                    }
+                }
+            }
+        }
+
+        // =================================================================
+        // 🛑 STOP ALL
+        // =================================================================
+
+        function myStopAll() {
+            myStopWebcam();
+            
+            myModelStates.forEach(state => {
+                state.context.clearRect(0, 0, state.canvas.width, state.canvas.height);
+                state.context.fillStyle = '#333';
+                state.context.fillRect(0, 0, state.canvas.width, state.canvas.height);
+                state.statusElement.textContent = 'Stopped';
+            });
+            
+            myStatusElement.textContent = 'Stopped. Click "Start" to run again.';
+            myStartButton.disabled = false;
+            myStopButton.disabled = true;
+            
+            console.log('All stopped');
+        }
+    </script>
+</body>
+</html>
