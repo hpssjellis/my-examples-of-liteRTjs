@@ -1,0 +1,747 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Quad FOMO Detector</title>
+
+    <!-- Minimal, Simple CSS -->
+    <style>
+        body { 
+            font-family: 'Inter', sans-serif;
+            margin: 20px; 
+            background-color: #f0f4f8;
+        }
+        #myMainContainer {
+            max-width: 1400px;
+            margin: 0 auto;
+        }
+        h1 {
+            text-align: center;
+            color: #3c4043;
+            font-size: 2em;
+            margin-bottom: 20px;
+        }
+        #myWebcamSection {
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 6px 15px rgba(0, 0, 0, 0.15);
+            margin-bottom: 20px;
+            text-align: center;
+        }
+        #myVideo { 
+            display: none; 
+        }
+        .myGlobalButton {
+            background-color: #1a73e8; 
+            color: white; 
+            padding: 12px 20px; 
+            border: none; 
+            border-radius: 6px; 
+            cursor: pointer; 
+            font-size: 16px; 
+            margin: 5px;
+            transition: background-color 0.3s, transform 0.1s;
+        }
+        .myGlobalButton:hover { 
+            background-color: #155cb8; 
+        }
+        .myGlobalButton:active {
+            transform: translateY(1px);
+        }
+        .myGlobalButton.reset {
+            background-color: #d93025;
+        }
+        .myGlobalButton.reset:hover {
+            background-color: #b02419;
+        }
+        #myModelsGrid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
+            margin-bottom: 30px;
+        }
+        .myModelContainer { 
+            background: white; 
+            padding: 20px; 
+            border-radius: 12px; 
+            box-shadow: 0 6px 15px rgba(0, 0, 0, 0.15);
+        }
+        .myModelTitle {
+            font-size: 1.3em;
+            font-weight: bold;
+            margin-bottom: 15px;
+            color: #3c4043;
+            text-align: center;
+        }
+        #myCanvasGrid {
+            display: grid;
+            grid-template-columns: repeat(2, 1fr);
+            gap: 20px;
+            background: white;
+            padding: 20px;
+            border-radius: 12px;
+            box-shadow: 0 6px 15px rgba(0, 0, 0, 0.15);
+        }
+        .myCanvasContainer {
+            text-align: center;
+        }
+        .myCanvasLabel {
+            font-size: 1.1em;
+            font-weight: bold;
+            color: #1a73e8;
+            margin-bottom: 10px;
+        }
+        .myCanvas { 
+            border: 3px solid #1a73e8;
+            border-radius: 8px; 
+            background-color: #333; 
+            width: 100%; 
+            height: auto;
+            max-width: 400px; 
+            aspect-ratio: 1 / 1;
+            display: block;
+            margin-left: auto;
+            margin-right: auto;
+        }
+        .myButton { 
+            background-color: #1a73e8; 
+            color: white; 
+            padding: 10px 15px; 
+            border: none; 
+            border-radius: 6px; 
+            cursor: pointer; 
+            font-size: 14px; 
+            margin-top: 10px; 
+            width: 100%; 
+            box-sizing: border-box;
+            transition: background-color 0.3s, transform 0.1s;
+        }
+        .myButton:hover { 
+            background-color: #155cb8; 
+        }
+        .myButton:active {
+            transform: translateY(1px);
+        }
+        .myButton:disabled { 
+            background-color: #ccc; 
+            cursor: not-allowed; 
+        }
+        .myStatus { 
+            margin-top: 10px; 
+            font-weight: bold; 
+            color: #3c4043; 
+            text-align: center; 
+            padding: 10px; 
+            border-radius: 6px; 
+            background-color: #e6f7ff;
+            border: 1px solid #90caff;
+            font-size: 0.85em;
+        }
+        .myLabel { 
+            display: block; 
+            margin-top: 10px; 
+            margin-bottom: 4px; 
+            font-weight: 600; 
+            font-size: 0.9em;
+            color: #3c4043;
+        }
+        .myInput, .mySelect, .myTextarea { 
+            width: 100%; 
+            padding: 8px; 
+            border: 1px solid #dadce0; 
+            border-radius: 6px; 
+            box-sizing: border-box; 
+            font-size: 13px;
+            margin-bottom: 5px;
+        }
+        .myConfigSection {
+            border: 1px dashed #1a73e8;
+            padding: 12px;
+            border-radius: 8px;
+            margin-top: 15px;
+            background-color: #f4faff;
+        }
+        .myConfigTitle {
+            font-weight: bold;
+            color: #1a73e8;
+            margin-bottom: 10px;
+            font-size: 0.95em;
+        }
+        @media (max-width: 1000px) {
+            #myModelsGrid {
+                grid-template-columns: 1fr;
+            }
+            #myCanvasGrid {
+                grid-template-columns: 1fr;
+            }
+        }
+    </style>
+    
+    <!-- TensorFlow Libraries -->
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@0.0.1-alpha.9/dist/tf-tflite.min.js"></script>
+</head>
+<body>
+
+    <script>
+        // =================================================================
+        // 🚀 CONFIGURATION FOR 4 MODELS
+        // =================================================================
+        const myModelsConfig = [
+            {
+                id: 1,
+                name: 'Model 1',
+                myDefaultUrl: 'https://hpssjellis.github.io/my-examples-of-edge-impulse/public/tflite/fomo01.tflite',
+                myInputResolution: 240,
+                myGridScaleFactor: 8,
+                myConfidenceThreshold: 0.5,
+                myClassLabels: ['background', 'Eyes'],
+                myInputChannels: 3,
+            },
+            {
+                id: 2,
+                name: 'Model 2',
+                myDefaultUrl: 'https://hpssjellis.github.io/my-examples-of-edge-impulse/public/tflite/fomo01.tflite',
+                myInputResolution: 240,
+                myGridScaleFactor: 8,
+                myConfidenceThreshold: 0.5,
+                myClassLabels: ['background', 'Object'],
+                myInputChannels: 3,
+            },
+            {
+                id: 3,
+                name: 'Model 3',
+                myDefaultUrl: 'https://hpssjellis.github.io/my-examples-of-edge-impulse/public/tflite/fomo01.tflite',
+                myInputResolution: 240,
+                myGridScaleFactor: 8,
+                myConfidenceThreshold: 0.5,
+                myClassLabels: ['background', 'Object'],
+                myInputChannels: 3,
+            },
+            {
+                id: 4,
+                name: 'Model 4',
+                myDefaultUrl: 'https://hpssjellis.github.io/my-examples-of-edge-impulse/public/tflite/fomo01.tflite',
+                myInputResolution: 240,
+                myGridScaleFactor: 8,
+                myConfidenceThreshold: 0.5,
+                myClassLabels: ['background', 'Object'],
+                myInputChannels: 3,
+            }
+        ];
+
+        // =================================================================
+        // ⚙️ GLOBAL VARIABLES 
+        // =================================================================
+        let myVideoElement = null;
+        let myIsWebcamReady = false;
+        let myAnimationFrameId = null;
+        
+        // Array to hold state for each model
+        let myModelStates = [];
+
+        // =================================================================
+        // 🏠 HTML SETUP
+        // =================================================================
+        
+        function myCreateDOM() {
+            const myMainContainer = document.createElement('div');
+            myMainContainer.id = 'myMainContainer';
+            
+            const myTitle = document.createElement('h1');
+            myTitle.textContent = 'Quad FOMO Detector - 4 Models, 1 Webcam';
+            myMainContainer.appendChild(myTitle);
+
+            // Webcam control section
+            const myWebcamSection = document.createElement('div');
+            myWebcamSection.id = 'myWebcamSection';
+            
+            const myWebcamTitle = document.createElement('h2');
+            myWebcamTitle.textContent = 'Webcam Controls';
+            myWebcamTitle.style.fontSize = '1.3em';
+            myWebcamTitle.style.marginBottom = '15px';
+            myWebcamSection.appendChild(myWebcamTitle);
+
+            const myStartWebcamBtn = document.createElement('button');
+            myStartWebcamBtn.className = 'myGlobalButton';
+            myStartWebcamBtn.textContent = 'Start Webcam';
+            myStartWebcamBtn.onclick = myStartWebcam;
+            myWebcamSection.appendChild(myStartWebcamBtn);
+
+            const myResetBtn = document.createElement('button');
+            myResetBtn.className = 'myGlobalButton reset';
+            myResetBtn.textContent = 'Stop Webcam & Reset All';
+            myResetBtn.onclick = myResetAll;
+            myWebcamSection.appendChild(myResetBtn);
+
+            myMainContainer.appendChild(myWebcamSection);
+
+            // Hidden video element
+            myVideoElement = document.createElement('video');
+            myVideoElement.id = 'myVideo';
+            myVideoElement.setAttribute('playsinline', '');
+            myVideoElement.setAttribute('autoplay', '');
+            myMainContainer.appendChild(myVideoElement);
+
+            // Grid of 4 model configs (without canvases)
+            const myModelsGrid = document.createElement('div');
+            myModelsGrid.id = 'myModelsGrid';
+
+            // Create UI for each model
+            myModelsConfig.forEach((config, index) => {
+                const modelState = myCreateModelState(config, index);
+                myModelStates.push(modelState);
+                myModelsGrid.appendChild(modelState.containerElement);
+            });
+
+            myMainContainer.appendChild(myModelsGrid);
+
+            // Create separate canvas grid below all controls
+            const myCanvasGrid = document.createElement('div');
+            myCanvasGrid.id = 'myCanvasGrid';
+
+            // Add all canvases to the canvas grid
+            myModelStates.forEach((state, index) => {
+                const myCanvasContainer = document.createElement('div');
+                myCanvasContainer.className = 'myCanvasContainer';
+
+                const myCanvasLabel = document.createElement('div');
+                myCanvasLabel.className = 'myCanvasLabel';
+                myCanvasLabel.textContent = state.config.name;
+                myCanvasContainer.appendChild(myCanvasLabel);
+
+                myCanvasContainer.appendChild(state.canvas);
+                myCanvasGrid.appendChild(myCanvasContainer);
+            });
+
+            myMainContainer.appendChild(myCanvasGrid);
+            document.body.appendChild(myMainContainer);
+        }
+
+        function myCreateModelState(config, index) {
+            const state = {
+                config: {...config},
+                model: null,
+                canvas: null,
+                context: null,
+                statusElement: null,
+                inputs: {},
+                containerElement: null
+            };
+
+            // Create canvas first (will be placed separately)
+            state.canvas = document.createElement('canvas');
+            state.canvas.className = 'myCanvas';
+            state.canvas.width = config.myInputResolution;
+            state.canvas.height = config.myInputResolution;
+            state.context = state.canvas.getContext('2d');
+
+            // Create container for controls
+            const myContainer = document.createElement('div');
+            myContainer.className = 'myModelContainer';
+            state.containerElement = myContainer;
+
+            // Title
+            const myTitle = document.createElement('div');
+            myTitle.className = 'myModelTitle';
+            myTitle.textContent = config.name;
+            myContainer.appendChild(myTitle);
+
+            // Status
+            state.statusElement = document.createElement('div');
+            state.statusElement.className = 'myStatus';
+            state.statusElement.textContent = 'Ready to load model';
+            myContainer.appendChild(state.statusElement);
+
+            // Configuration section
+            const myConfigSection = document.createElement('div');
+            myConfigSection.className = 'myConfigSection';
+            
+            const myConfigTitle = document.createElement('div');
+            myConfigTitle.className = 'myConfigTitle';
+            myConfigTitle.textContent = 'Model Configuration';
+            myConfigSection.appendChild(myConfigTitle);
+
+            // Resolution input
+            const myResLabel = document.createElement('label');
+            myResLabel.className = 'myLabel';
+            myResLabel.textContent = 'Resolution:';
+            myConfigSection.appendChild(myResLabel);
+            
+            state.inputs.resolution = document.createElement('input');
+            state.inputs.resolution.type = 'number';
+            state.inputs.resolution.className = 'myInput';
+            state.inputs.resolution.value = config.myInputResolution;
+            state.inputs.resolution.min = '32';
+            myConfigSection.appendChild(state.inputs.resolution);
+
+            // Channels input
+            const myChannelsLabel = document.createElement('label');
+            myChannelsLabel.className = 'myLabel';
+            myChannelsLabel.textContent = 'Channels:';
+            myConfigSection.appendChild(myChannelsLabel);
+            
+            state.inputs.channels = document.createElement('select');
+            state.inputs.channels.className = 'mySelect';
+            state.inputs.channels.innerHTML = `
+                <option value="3" ${config.myInputChannels === 3 ? 'selected' : ''}>RGB (3)</option>
+                <option value="1" ${config.myInputChannels === 1 ? 'selected' : ''}>Grayscale (1)</option>
+            `;
+            myConfigSection.appendChild(state.inputs.channels);
+
+            // Confidence input
+            const myConfLabel = document.createElement('label');
+            myConfLabel.className = 'myLabel';
+            myConfLabel.textContent = 'Confidence Threshold:';
+            myConfigSection.appendChild(myConfLabel);
+            
+            state.inputs.confidence = document.createElement('input');
+            state.inputs.confidence.type = 'number';
+            state.inputs.confidence.className = 'myInput';
+            state.inputs.confidence.value = config.myConfidenceThreshold;
+            state.inputs.confidence.min = '0';
+            state.inputs.confidence.max = '1';
+            state.inputs.confidence.step = '0.05';
+            myConfigSection.appendChild(state.inputs.confidence);
+
+            // Grid factor input
+            const myGridLabel = document.createElement('label');
+            myGridLabel.className = 'myLabel';
+            myGridLabel.textContent = 'Grid Scale Factor:';
+            myConfigSection.appendChild(myGridLabel);
+            
+            state.inputs.gridFactor = document.createElement('input');
+            state.inputs.gridFactor.type = 'number';
+            state.inputs.gridFactor.className = 'myInput';
+            state.inputs.gridFactor.value = config.myGridScaleFactor;
+            state.inputs.gridFactor.min = '4';
+            state.inputs.gridFactor.step = '4';
+            myConfigSection.appendChild(state.inputs.gridFactor);
+
+            // Labels input
+            const myLabelsLabel = document.createElement('label');
+            myLabelsLabel.className = 'myLabel';
+            myLabelsLabel.textContent = 'Class Labels (comma-separated):';
+            myConfigSection.appendChild(myLabelsLabel);
+            
+            state.inputs.labels = document.createElement('textarea');
+            state.inputs.labels.className = 'myTextarea';
+            state.inputs.labels.rows = '2';
+            state.inputs.labels.value = config.myClassLabels.join(', ');
+            myConfigSection.appendChild(state.inputs.labels);
+
+            // Apply config button
+            const myApplyBtn = document.createElement('button');
+            myApplyBtn.className = 'myButton';
+            myApplyBtn.style.backgroundColor = '#0f9d58';
+            myApplyBtn.textContent = 'Apply Config';
+            myApplyBtn.onclick = () => myApplyConfig(index);
+            myConfigSection.appendChild(myApplyBtn);
+
+            myContainer.appendChild(myConfigSection);
+
+            // URL input
+            const myUrlLabel = document.createElement('label');
+            myUrlLabel.className = 'myLabel';
+            myUrlLabel.textContent = 'Model URL:';
+            myContainer.appendChild(myUrlLabel);
+            
+            state.inputs.url = document.createElement('input');
+            state.inputs.url.type = 'text';
+            state.inputs.url.className = 'myInput';
+            state.inputs.url.value = config.myDefaultUrl;
+            myContainer.appendChild(state.inputs.url);
+
+            // Load model buttons
+            const myLoadDefaultBtn = document.createElement('button');
+            myLoadDefaultBtn.className = 'myButton';
+            myLoadDefaultBtn.style.backgroundColor = '#fbbc04';
+            myLoadDefaultBtn.style.color = '#3c4043';
+            myLoadDefaultBtn.textContent = 'Load Default URL';
+            myLoadDefaultBtn.onclick = () => myLoadModel(index, config.myDefaultUrl);
+            myContainer.appendChild(myLoadDefaultBtn);
+
+            const myLoadCustomBtn = document.createElement('button');
+            myLoadCustomBtn.className = 'myButton';
+            myLoadCustomBtn.textContent = 'Load Custom URL';
+            myLoadCustomBtn.onclick = () => myLoadModel(index, state.inputs.url.value);
+            myContainer.appendChild(myLoadCustomBtn);
+
+            // File input
+            const myFileLabel = document.createElement('label');
+            myFileLabel.className = 'myLabel';
+            myFileLabel.textContent = 'Or load from file:';
+            myContainer.appendChild(myFileLabel);
+            
+            state.inputs.file = document.createElement('input');
+            state.inputs.file.type = 'file';
+            state.inputs.file.accept = '.tflite';
+            state.inputs.file.onchange = () => myLoadModelFromFile(index);
+            myContainer.appendChild(state.inputs.file);
+
+            return state;
+        }
+
+        window.onload = myCreateDOM;
+
+        // =================================================================
+        // ⚙️ CONFIGURATION MANAGEMENT
+        // =================================================================
+
+        function myApplyConfig(index) {
+            const state = myModelStates[index];
+            try {
+                const myNewResolution = parseInt(state.inputs.resolution.value);
+                if (isNaN(myNewResolution) || myNewResolution < 32) {
+                    throw new Error('Resolution must be at least 32.');
+                }
+                state.config.myInputResolution = myNewResolution;
+
+                const myNewChannels = parseInt(state.inputs.channels.value);
+                if (myNewChannels !== 1 && myNewChannels !== 3) {
+                    throw new Error('Channels must be 1 or 3.');
+                }
+                state.config.myInputChannels = myNewChannels;
+
+                const myNewConfidence = parseFloat(state.inputs.confidence.value);
+                if (isNaN(myNewConfidence) || myNewConfidence < 0 || myNewConfidence > 1) {
+                    throw new Error('Confidence must be between 0 and 1.');
+                }
+                state.config.myConfidenceThreshold = myNewConfidence;
+
+                const myNewGridFactor = parseInt(state.inputs.gridFactor.value);
+                if (isNaN(myNewGridFactor) || myNewGridFactor <= 0 || myNewResolution % myNewGridFactor !== 0) {
+                    throw new Error('Grid factor must divide resolution evenly.');
+                }
+                state.config.myGridScaleFactor = myNewGridFactor;
+
+                let myNewLabels = state.inputs.labels.value.split(',').map(l => l.trim()).filter(l => l.length > 0);
+                if (myNewLabels.length === 0 || myNewLabels[0].toLowerCase() !== 'background') {
+                    throw new Error('First label must be "background".');
+                }
+                state.config.myClassLabels = myNewLabels;
+
+                // Update canvas size
+                state.canvas.width = myNewResolution;
+                state.canvas.height = myNewResolution;
+
+                state.statusElement.textContent = `Config applied! Resolution: ${myNewResolution}, Channels: ${myNewChannels}`;
+                console.log(`Model ${index + 1} config updated:`, state.config);
+            } catch (error) {
+                state.statusElement.textContent = `Config Error: ${error.message}`;
+                console.error(`Model ${index + 1} config error:`, error);
+            }
+        }
+
+        // =================================================================
+        // 💻 MODEL LOADING
+        // =================================================================
+
+        async function myLoadModel(index, source) {
+            const state = myModelStates[index];
+            state.statusElement.textContent = `Loading model from URL...`;
+            
+            try {
+                state.model = await tflite.loadTFLiteModel(source);
+                state.statusElement.textContent = `Model loaded successfully!`;
+                console.log(`Model ${index + 1} loaded from URL`);
+            } catch (error) {
+                state.statusElement.textContent = `Failed to load model. Check console.`;
+                console.error(`Model ${index + 1} loading error:`, error);
+            }
+        }
+
+        async function myLoadModelFromFile(index) {
+            const state = myModelStates[index];
+            const file = state.inputs.file.files[0];
+            
+            if (!file) {
+                state.statusElement.textContent = 'No file selected';
+                return;
+            }
+
+            state.statusElement.textContent = `Loading model from file...`;
+            
+            try {
+                const arrayBuffer = await new Promise((resolve, reject) => {
+                    const reader = new FileReader();
+                    reader.onload = () => resolve(reader.result);
+                    reader.onerror = reject;
+                    reader.readAsArrayBuffer(file);
+                });
+
+                state.model = await tflite.loadTFLiteModel(arrayBuffer);
+                state.statusElement.textContent = `Model loaded from file!`;
+                console.log(`Model ${index + 1} loaded from file: ${file.name}`);
+            } catch (error) {
+                state.statusElement.textContent = `Failed to load file. Check console.`;
+                console.error(`Model ${index + 1} file loading error:`, error);
+            }
+        }
+
+        // =================================================================
+        // 📹 WEBCAM MANAGEMENT
+        // =================================================================
+
+        async function myStartWebcam() {
+            if (myIsWebcamReady) return;
+
+            try {
+                const myStream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        width: 640,
+                        height: 640,
+                        facingMode: 'user'
+                    },
+                    audio: false
+                });
+
+                myVideoElement.srcObject = myStream;
+                await new Promise(resolve => myVideoElement.onloadedmetadata = resolve);
+                myVideoElement.play();
+                myIsWebcamReady = true;
+                
+                console.log('Webcam started');
+                myRunInferenceLoop();
+            } catch (error) {
+                console.error('Webcam error:', error);
+                alert(`Webcam error: ${error.message}`);
+            }
+        }
+
+        function myStopWebcam() {
+            if (myAnimationFrameId) {
+                cancelAnimationFrame(myAnimationFrameId);
+                myAnimationFrameId = null;
+            }
+            if (myVideoElement && myVideoElement.srcObject) {
+                myVideoElement.srcObject.getTracks().forEach(track => track.stop());
+                myVideoElement.srcObject = null;
+            }
+            myIsWebcamReady = false;
+        }
+
+        // =================================================================
+        // 🔄 INFERENCE LOOP
+        // =================================================================
+
+        function myRunInferenceLoop() {
+            if (!myIsWebcamReady) return;
+
+            // Process each model
+            myModelStates.forEach((state, index) => {
+                if (state.model) {
+                    tf.tidy(() => {
+                        const config = state.config;
+                        const myInputSize = config.myInputResolution;
+                        
+                        // Draw video to canvas
+                        state.context.drawImage(myVideoElement, 0, 0, myInputSize, myInputSize);
+                        
+                        // Create input tensor
+                        let myInputTensor = tf.browser.fromPixels(state.canvas, config.myInputChannels);
+                        let myNormalizedTensor = myInputTensor
+                            .resizeBilinear([myInputSize, myInputSize])
+                            .cast('float32')
+                            .div(255.0)
+                            .expandDims(0);
+
+                        // Run inference
+                        const myOutputTensor = state.model.predict(myNormalizedTensor);
+                        
+                        // Post-process
+                        myPostProcessFomo(state, myOutputTensor);
+                    });
+                }
+            });
+
+            myAnimationFrameId = requestAnimationFrame(myRunInferenceLoop);
+        }
+
+        // =================================================================
+        // 📊 POST-PROCESSING
+        // =================================================================
+
+        function myPostProcessFomo(state, myOutputTensor) {
+            const config = state.config;
+            const myPredictionData = myOutputTensor.dataSync();
+            const myOutputShape = myOutputTensor.shape;
+            const myNumClasses = myOutputShape[3];
+            const myGridX = myOutputShape[1];
+            const myGridY = myOutputShape[2];
+
+            const myInputSize = config.myInputResolution;
+            const myGridSize = myInputSize / config.myGridScaleFactor;
+
+            if (myGridX !== myGridSize || myGridY !== myGridSize) {
+                console.error(`Model ${state.config.name}: Grid size mismatch`);
+                return;
+            }
+
+            if (myNumClasses !== config.myClassLabels.length) {
+                console.error(`Model ${state.config.name}: Class count mismatch`);
+                return;
+            }
+
+            // Redraw video frame
+            state.context.drawImage(myVideoElement, 0, 0, myInputSize, myInputSize);
+
+            // Process grid
+            for (let i = 0; i < myGridSize; i++) {
+                for (let j = 0; j < myGridSize; j++) {
+                    const myCellStartIndex = (i * myGridSize * myNumClasses) + (j * myNumClasses);
+
+                    let myMaxProbability = 0;
+                    let myMaxClassIndex = 0;
+
+                    for (let k = 0; k < myNumClasses; k++) {
+                        const myProbability = myPredictionData[myCellStartIndex + k];
+                        if (myProbability > myMaxProbability) {
+                            myMaxProbability = myProbability;
+                            myMaxClassIndex = k;
+                        }
+                    }
+
+                    if (myMaxClassIndex !== 0 && myMaxProbability >= config.myConfidenceThreshold) {
+                        const myCentroidX = (j * config.myGridScaleFactor) + (config.myGridScaleFactor / 2);
+                        const myCentroidY = (i * config.myGridScaleFactor) + (config.myGridScaleFactor / 2);
+                        const myLabel = config.myClassLabels[myMaxClassIndex];
+                        
+                        console.log(
+                            `[${config.name}] Class: ${myLabel} | Confidence: ${myMaxProbability.toFixed(3)} | Centroid: (${myCentroidX.toFixed(0)}, ${myCentroidY.toFixed(0)})`
+                        );
+                        
+                        state.context.fillStyle = myMaxClassIndex % 2 === 1 ? 'rgba(255, 69, 0, 0.8)' : 'rgba(50, 205, 50, 0.8)';
+                        state.context.fillRect(myCentroidX - 4, myCentroidY - 4, 8, 8);
+                        
+                        state.context.font = '10px Arial';
+                        state.context.fillStyle = 'white';
+                        state.context.textAlign = 'center';
+                        state.context.fillText(myLabel, myCentroidX, myCentroidY - 6);
+                    }
+                }
+            }
+        }
+
+        // =================================================================
+        // 🔄 RESET
+        // =================================================================
+
+        function myResetAll() {
+            myStopWebcam();
+            
+            myModelStates.forEach(state => {
+                state.model = null;
+                state.context.clearRect(0, 0, state.canvas.width, state.canvas.height);
+                state.context.fillStyle = '#333';
+                state.context.fillRect(0, 0, state.canvas.width, state.canvas.height);
+                state.statusElement.textContent = 'Reset. Ready to load model.';
+            });
+            
+            console.log('All models reset');
+        }
+    </script>
+</body>
+</html>
