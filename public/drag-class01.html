@@ -1,0 +1,565 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Classification Detector - Simple Model Loader</title>
+
+    <style>
+        body { 
+            font-family: 'Inter', sans-serif;
+            margin: 20px; 
+            background-color: #f0f4f8;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+        #myMainContainer {
+            max-width: 600px;
+            width: 100%;
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 6px 15px rgba(0, 0, 0, 0.15);
+        }
+        h1 {
+            text-align: center;
+            color: #3c4043;
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+        #myInstructions {
+            text-align: center;
+            color: #5f6368;
+            margin-bottom: 20px;
+            font-size: 0.95em;
+        }
+        #myVideo { 
+            display: none; 
+        }
+        .myButton {
+            background-color: #1a73e8; 
+            color: white; 
+            padding: 12px 24px; 
+            border: none; 
+            border-radius: 8px; 
+            cursor: pointer; 
+            font-size: 16px; 
+            margin: 5px;
+            transition: background-color 0.3s, transform 0.1s;
+            font-weight: 600;
+        }
+        .myButton:hover { 
+            background-color: #155cb8; 
+        }
+        .myButton:active {
+            transform: translateY(1px);
+        }
+        .myButton:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .myButton.stop {
+            background-color: #d93025;
+        }
+        .myButton.stop:hover {
+            background-color: #b02419;
+        }
+        #myControlSection {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        #myStatusMessage {
+            font-size: 1em;
+            margin: 15px 0;
+            color: #3c4043;
+            font-weight: 500;
+            text-align: center;
+            padding: 12px;
+            background-color: #e6f7ff;
+            border: 1px solid #90caff;
+            border-radius: 8px;
+        }
+        #myCanvas { 
+            border: 3px solid #1a73e8;
+            border-radius: 8px; 
+            background-color: #333; 
+            width: 100%; 
+            height: auto;
+            max-width: 400px; 
+            aspect-ratio: 1 / 1;
+            display: block;
+            margin: 0 auto;
+        }
+        .myInputGroup {
+            display: flex;
+            gap: 5px;
+            margin-bottom: 10px;
+        }
+        .myInputGroup input[type="text"] {
+            flex-grow: 1;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            font-size: 16px;
+        }
+        #myLabelEditor {
+            width: 100%;
+            height: 60px;
+            padding: 10px;
+            box-sizing: border-box;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 14px;
+            margin-bottom: 15px;
+        }
+        /* NEW: Result Display Style */
+        #myResultDisplay {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            background-color: #e6ffe6; /* Light green background */
+            border: 2px solid #0f9d58; /* Edge Impulse Green */
+            text-align: center;
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #0f9d58;
+        }
+        #myResultLabel {
+            font-size: 1.8em;
+            color: #0c8046;
+            margin-top: 5px;
+            display: block;
+        }
+        #myResultConfidence {
+            font-size: 1em;
+            color: #3c4043;
+            display: block;
+            margin-top: 5px;
+        }
+    </style>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@0.0.1-alpha.9/dist/tf-tflite.min.js"></script>
+</head>
+<body>
+
+    <script>
+        // =================================================================
+        // 🚀 DEFAULT CONFIGURATION
+        // =================================================================
+        const myDefaultConfig = {
+            // Note: This URL points to a classification model (e.g., Rock-Paper-Scissors)
+            myDefaultUrl: 'https://hpssjellis.github.io/my-examples-of-edge-impulse/public/tflite/rps.tflite', 
+            myInputResolution: 96, // Smaller resolution common for classification
+            myClassLabels: ['rock', 'paper', 'scissors'],
+            myInputChannels: 3,
+        };
+
+        // =================================================================
+        // ⚙️ GLOBAL VARIABLES 
+        // =================================================================
+        let myVideoElement = null;
+        let myIsWebcamReady = false;
+        let myAnimationFrameId = null;
+        let myStatusElement = null;
+        let myStartButton = null;
+        let myStopButton = null;
+        let myCanvas = null;
+        let myContext = null;
+        let myLabelEditor = null;
+        let myUrlInput = null;
+        let myResultDisplay = null; 
+        
+        let myModel = null;
+        let myCurrentConfig = {...myDefaultConfig};
+        let myCurrentModelName = 'Default Model';
+
+        // =================================================================
+        // 🏠 HTML SETUP
+        // =================================================================
+        
+        function myCreateDOM() {
+            const myMainContainer = document.createElement('div');
+            myMainContainer.id = 'myMainContainer';
+            
+            const myTitle = document.createElement('h1');
+            myTitle.textContent = 'Edge Impulse Classification Detector';
+            myMainContainer.appendChild(myTitle);
+
+            const myInstructions = document.createElement('div');
+            myInstructions.id = 'myInstructions';
+            myInstructions.innerHTML = 'Load a **Classification** model via URL or File.<br>Detected class will appear below the image.';
+            myMainContainer.appendChild(myInstructions);
+
+            // 1. URL Upload
+            const myUrlGroup = document.createElement('div');
+            myUrlGroup.className = 'myInputGroup';
+            myUrlInput = document.createElement('input');
+            myUrlInput.type = 'text';
+            myUrlInput.placeholder = 'Paste Model URL (.tflite or .lite)';
+            myUrlInput.value = myDefaultConfig.myDefaultUrl;
+            myUrlGroup.appendChild(myUrlInput);
+            const myUrlButton = document.createElement('button');
+            myUrlButton.className = 'myButton';
+            myUrlButton.textContent = 'Load from URL';
+            myUrlButton.onclick = myLoadModelFromUrl; // Use static link
+            myUrlGroup.appendChild(myUrlButton);
+            myMainContainer.appendChild(myUrlGroup);
+
+            // 2. File Input
+            const myFileInput = document.createElement('input');
+            myFileInput.type = 'file';
+            myFileInput.style.marginBottom = '15px';
+            myFileInput.setAttribute('accept', '.tflite,.lite');
+            myFileInput.onchange = myHandleFileInput;
+            myMainContainer.appendChild(myFileInput);
+
+            // Labels Textarea
+            const myLabelHeader = document.createElement('div');
+            myLabelHeader.style.cssText = 'font-size: 0.9em; margin-top: 15px; margin-bottom: 5px; font-weight: bold; color: #3c4043;';
+            myLabelHeader.textContent = `Class Labels (Comma-separated, ${myDefaultConfig.myClassLabels.length} expected)`;
+            myMainContainer.appendChild(myLabelHeader);
+            
+            myLabelEditor = document.createElement('textarea');
+            myLabelEditor.id = 'myLabelEditor';
+            myLabelEditor.placeholder = 'Enter labels here (e.g., cat, dog, bird)';
+            myLabelEditor.oninput = myUpdateConfigFromLabels;
+            myMainContainer.appendChild(myLabelEditor);
+
+            // Control section
+            const myControlSection = document.createElement('div');
+            myControlSection.id = 'myControlSection';
+            
+            myStatusElement = document.createElement('div');
+            myStatusElement.id = 'myStatusMessage';
+            myStatusElement.textContent = 'Click "Start" to begin';
+            myControlSection.appendChild(myStatusElement);
+
+            myStartButton = document.createElement('button');
+            myStartButton.className = 'myButton';
+            myStartButton.textContent = 'Start Webcam & Load Default Model';
+            myStartButton.onclick = myStartAll;
+            myControlSection.appendChild(myStartButton);
+
+            myStopButton = document.createElement('button');
+            myStopButton.className = 'myButton stop';
+            myStopButton.textContent = 'Stop Webcam';
+            myStopButton.onclick = myStopAll;
+            myStopButton.disabled = true;
+            myControlSection.appendChild(myStopButton);
+
+            myMainContainer.appendChild(myControlSection);
+
+            // Hidden video element
+            myVideoElement = document.createElement('video');
+            myVideoElement.id = 'myVideo';
+            myVideoElement.setAttribute('playsinline', '');
+            myVideoElement.setAttribute('autoplay', '');
+            myMainContainer.appendChild(myVideoElement);
+
+            // Canvas for camera image
+            myCanvas = document.createElement('canvas');
+            myCanvas.id = 'myCanvas';
+            myCanvas.width = myCurrentConfig.myInputResolution;
+            myCanvas.height = myCurrentConfig.myInputResolution;
+            myContext = myCanvas.getContext('2d');
+            myMainContainer.appendChild(myCanvas);
+            
+            // NEW: Result Display Area
+            myResultDisplay = document.createElement('div');
+            myResultDisplay.id = 'myResultDisplay';
+            myResultDisplay.innerHTML = 'Classification Result:<span id="myResultLabel">Awaiting Input...</span><span id="myResultConfidence"></span>';
+            myMainContainer.appendChild(myResultDisplay);
+
+            document.body.appendChild(myMainContainer);
+
+            // Initial update for the label editor
+            myUpdateLabelEditor();
+        }
+
+        window.onload = myCreateDOM;
+
+        // =================================================================
+        // 🔍 CONFIGURATION AND LABEL MANAGEMENT
+        // =================================================================
+
+        function myAutoDetectConfig(myModel) {
+            try {
+                const myDetectedConfig = {...myDefaultConfig};
+                
+                // 1. Detect Input Size
+                if (myModel.inputs && myModel.inputs.length > 0) {
+                    const myInput = myModel.inputs[0];
+                    if (myInput.shape && myInput.shape.length === 4) {
+                        const myHeight = myInput.shape[1];
+                        const myWidth = myInput.shape[2];
+                        const myChannels = myInput.shape[3];
+                        if (myHeight === myWidth && myHeight > 0) myDetectedConfig.myInputResolution = myHeight;
+                        if (myChannels === 1 || myChannels === 3) myDetectedConfig.myInputChannels = myChannels;
+                    }
+                }
+                
+                // 2. Detect Output Classes (Expected 2D output: [1, N_CLASSES])
+                if (myModel.outputs && myModel.outputs.length > 0) {
+                    const myOutput = myModel.outputs[0];
+                    if (myOutput.shape && myOutput.shape.length === 2) {
+                        const myNumClasses = myOutput.shape[1];
+                        
+                        if (myNumClasses > 0 && myNumClasses !== myCurrentConfig.myClassLabels.length) {
+                            // Generate generic labels if count is different
+                            myDetectedConfig.myClassLabels = [];
+                            for (let i = 0; i < myNumClasses; i++) {
+                                myDetectedConfig.myClassLabels.push(`Class${i}`);
+                            }
+                        } else if (myNumClasses === myCurrentConfig.myClassLabels.length) {
+                             // Keep current user-edited labels if class count matches
+                            myDetectedConfig.myClassLabels = myCurrentConfig.myClassLabels;
+                        } else {
+                            // Classification model must have at least one class
+                            throw new Error("Invalid output shape for classification model.");
+                        }
+                    }
+                }
+
+                // Update canvas size
+                myCanvas.width = myDetectedConfig.myInputResolution;
+                myCanvas.height = myDetectedConfig.myInputResolution;
+                
+                return myDetectedConfig;
+                
+            } catch (myError) {
+                console.error('Auto-detection error:', myError);
+                return {...myDefaultConfig};
+            }
+        }
+
+        function myUpdateLabelEditor() {
+            if (myLabelEditor) {
+                myLabelEditor.value = myCurrentConfig.myClassLabels.join(', ');
+                document.getElementById('myLabelHeader').textContent = 
+                    `Class Labels (Comma-separated, ${myCurrentConfig.myClassLabels.length} expected)`;
+            }
+        }
+        
+        function myUpdateConfigFromLabels() {
+            if (myLabelEditor) {
+                const myNewLabels = myLabelEditor.value
+                    .split(',')
+                    .map(myLabel => myLabel.trim())
+                    .filter(myLabel => myLabel.length > 0);
+                
+                // Ensure label count matches model output size
+                if (myNewLabels.length === myCurrentConfig.myClassLabels.length) {
+                    myCurrentConfig.myClassLabels = myNewLabels;
+                    myStatusElement.textContent = `Labels updated to ${myCurrentConfig.myClassLabels.length} classes.`;
+                } else {
+                    myStatusElement.textContent = `Warning: Label count must be ${myCurrentConfig.myClassLabels.length}. Current: ${myNewLabels.length}`;
+                }
+            }
+        }
+
+        // =================================================================
+        // 💻 MODEL LOADING
+        // =================================================================
+
+        async function myLoadModel(mySource, myModelName) {
+            try {
+                myModel = await tflite.loadTFLiteModel(mySource);
+                myCurrentModelName = myModelName;
+                
+                // Re-evaluate config based on the new model structure
+                myCurrentConfig = myAutoDetectConfig(myModel);
+                myUpdateLabelEditor();
+                
+                console.log(`Model loaded: ${myModelName}`);
+                myStatusElement.textContent = `Model loaded: ${myModelName} (Ready to run)`;
+            } catch (myError) {
+                console.error('Model loading error:', myError);
+                throw new Error(`Failed to load model: ${myError.message.substring(0, 100)}...`);
+            }
+        }
+        
+        async function myLoadModelFromUrl() {
+            const myUrl = myUrlInput.value;
+            if (!myUrl.endsWith('.tflite') && !myUrl.endsWith('.lite')) {
+                 myStatusElement.textContent = 'Error: URL must end with .tflite or .lite';
+                 return;
+            }
+            myStatusElement.textContent = `Loading model from URL: ${myUrl}...`;
+            try {
+                await myLoadModel(myUrl, myUrl.substring(myUrl.lastIndexOf('/') + 1));
+                if (myIsWebcamReady) myStatusElement.textContent += ' (Inference running)';
+            } catch (myError) {
+                 myStatusElement.textContent = `Error: ${myError.message}`;
+            }
+        }
+
+        function myHandleFileInput(myEvent) {
+            const myFile = myEvent.target.files[0];
+            if (myFile) {
+                myStatusElement.textContent = `Loading model from file: ${myFile.name}...`;
+                
+                const myArrayBuffer = new Promise((myResolve, myReject) => {
+                    const myReader = new FileReader();
+                    myReader.onload = () => myResolve(myReader.result);
+                    myReader.onerror = myReject;
+                    myReader.readAsArrayBuffer(myFile);
+                });
+
+                myArrayBuffer
+                    .then(myBuffer => myLoadModel(myBuffer, myFile.name))
+                    .catch(myError => {
+                        myStatusElement.textContent = `Failed to load ${myFile.name}. Check console.`;
+                        console.error('File loading error:', myError);
+                    });
+            }
+        }
+
+        // =================================================================
+        // 🚀 START/STOP & INFERENCE
+        // =================================================================
+
+        async function myStartAll() {
+            myStartButton.disabled = true;
+            myResultDisplay.innerHTML = 'Classification Result:<span id="myResultLabel">Starting...</span><span id="myResultConfidence"></span>';
+
+            try {
+                if (!myModel) {
+                     await myLoadModel(myDefaultConfig.myDefaultUrl, 'Default Model');
+                }
+                myStatusElement.textContent = 'Model loaded! Starting webcam...';
+                
+                await myStartWebcam();
+                
+                myStatusElement.textContent = 'Running classification...';
+                myStopButton.disabled = false;
+                
+            } catch (myError) {
+                myStatusElement.textContent = `Error: ${myError.message}`;
+                console.error('Startup error:', myError);
+                myStartButton.disabled = false;
+            }
+        }
+        
+        async function myStartWebcam() {
+            if (myIsWebcamReady) return;
+
+            try {
+                const myStream = await navigator.mediaDevices.getUserMedia({
+                    video: { facingMode: 'user' },
+                    audio: false
+                });
+
+                myVideoElement.srcObject = myStream;
+                await new Promise(myResolve => myVideoElement.onloadedmetadata = myResolve); 
+                myVideoElement.play();
+                myIsWebcamReady = true;
+                
+                myRunInferenceLoop();
+            } catch (myError) {
+                console.error('Webcam error:', myError);
+                throw new Error(`Webcam access failed: ${myError.name}`);
+            }
+        }
+
+        function myStopWebcam() {
+            if (myAnimationFrameId) {
+                cancelAnimationFrame(myAnimationFrameId);
+                myAnimationFrameId = null;
+            }
+            if (myVideoElement && myVideoElement.srcObject) {
+                myVideoElement.srcObject.getTracks().forEach(myTrack => myTrack.stop());
+                myVideoElement.srcObject = null;
+            }
+            myIsWebcamReady = false;
+        }
+
+        function myRunInferenceLoop() {
+            if (!myIsWebcamReady || !myModel) {
+                myAnimationFrameId = requestAnimationFrame(myRunInferenceLoop);
+                return;
+            }
+
+            tf.tidy(() => {
+                const myInputSize = myCurrentConfig.myInputResolution;
+                
+                // 1. Draw video frame onto the canvas
+                myContext.drawImage(myVideoElement, 0, 0, myInputSize, myInputSize);
+                
+                // 2. Prepare the tensor for the model
+                let myInputTensor = tf.browser.fromPixels(myCanvas, myCurrentConfig.myInputChannels);
+                let myNormalizedTensor = myInputTensor
+                    .resizeBilinear([myInputSize, myInputSize])
+                    .cast('float32')
+                    .div(255.0)
+                    .expandDims(0); // Add batch dimension [1, H, W, C]
+
+                // 3. Run prediction
+                const myOutputTensor = myModel.predict(myNormalizedTensor);
+                
+                // 4. Post-process the results (Classification specific)
+                myPostProcessClassification(myOutputTensor);
+            });
+
+            myAnimationFrameId = requestAnimationFrame(myRunInferenceLoop);
+        }
+
+        /**
+         * Post-processes the model output for a Classification task.
+         * Finds the index of the highest probability.
+         */
+        function myPostProcessClassification(myOutputTensor) {
+            // Check output size before proceeding
+            const myNumClasses = myCurrentConfig.myClassLabels.length;
+            if (myOutputTensor.shape[1] !== myNumClasses) {
+                 // Safety check: model output count must match labels count
+                myStatusElement.textContent = `ERROR: Model output (${myOutputTensor.shape[1]}) != Label count (${myNumClasses})`;
+                return;
+            }
+
+            // Find the maximum value and its index (argmax)
+            const myResult = myOutputTensor.squeeze().arraySync(); // Convert [1, N] to [N]
+            
+            let myMaxProbability = 0;
+            let myMaxClassIndex = 0;
+            
+            for (let i = 0; i < myResult.length; i++) {
+                if (myResult[i] > myMaxProbability) {
+                    myMaxProbability = myResult[i];
+                    myMaxClassIndex = i;
+                }
+            }
+            
+            const myLabel = myCurrentConfig.myClassLabels[myMaxClassIndex];
+            const myConfidence = (myMaxProbability * 100).toFixed(2);
+            
+            // Update the display elements
+            document.getElementById('myResultLabel').textContent = myLabel.toUpperCase();
+            document.getElementById('myResultConfidence').textContent = `${myConfidence}% Confidence`;
+
+            // Log to console (optional)
+            console.log(`Classified: ${myLabel} (${myConfidence}%)`);
+        }
+
+        function myStopAll() {
+            myStopWebcam();
+            
+            myContext.clearRect(0, 0, myCanvas.width, myCanvas.height);
+            myContext.fillStyle = '#333';
+            myContext.fillRect(0, 0, myCanvas.width, myCanvas.height);
+            
+            document.getElementById('myResultLabel').textContent = 'Awaiting Input...';
+            document.getElementById('myResultConfidence').textContent = '';
+            
+            myStatusElement.textContent = 'Stopped. Click "Start" or load a new model.';
+            myStartButton.disabled = false;
+            myStopButton.disabled = true;
+            
+            console.log('Stopped');
+        }
+    </script>
+</body>
+</html>
