@@ -265,27 +265,11 @@
             myMainContainer.appendChild(myInstructions);
 
             // Model Select Dropdown
-            const mySelectGroup = document.createElement('div');
-            mySelectGroup.className = 'myInputGroup';
-            mySelectGroup.style.marginBottom = '15px';
-            
             myModelSelect = document.createElement('select');
-            myModelSelect.style.cssText = 'flex-grow: 1; padding: 10px; border: 1px solid #ccc; border-radius: 8px; font-size: 16px; background-color: white;';
+            myModelSelect.style.cssText = 'width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 8px; font-size: 16px; background-color: white; margin-bottom: 15px;';
             myModelSelect.innerHTML = '<option value="">Loading models from GitHub...</option>';
             myModelSelect.onchange = myHandleModelSelect;
-            mySelectGroup.appendChild(myModelSelect);
-            
-            const mySelectButton = document.createElement('button');
-            mySelectButton.className = 'myButton';
-            mySelectButton.textContent = 'Load Selected';
-            mySelectButton.onclick = () => {
-                if (myModelSelect.value) {
-                    myUrlInput.value = myModelSelect.value;
-                    myLoadModelFromUrl(myModelSelect.value);
-                }
-            };
-            mySelectGroup.appendChild(mySelectButton);
-            myMainContainer.appendChild(mySelectGroup);
+            myMainContainer.appendChild(myModelSelect);
 
             // URL Upload
             const myUrlGroup = document.createElement('div');
@@ -442,10 +426,10 @@
                 
                 myModelFiles.forEach(myFile => {
                     const myOption = document.createElement('option');
-                    // Convert download_url to GitHub Pages URL
-                    const myGithubPagesUrl = myFile.download_url
-                        .replace('https://raw.githubusercontent.com/', 'https://')
-                        .replace(`/${myUser}/${myRepo}/${myBranch}/`, `${myUser}.github.io/${myRepo}/`);
+                    
+                    // Build proper GitHub Pages URL
+                    // Format: https://username.github.io/repository/path/to/file
+                    const myGithubPagesUrl = `https://${myUser}.github.io/${myRepo}/${myFolderPath}/${myFile.name}`;
                     
                     myOption.value = myGithubPagesUrl;
                     myOption.textContent = myFile.name;
@@ -463,6 +447,8 @@
         function myHandleModelSelect() {
             if (myModelSelect.value) {
                 myUrlInput.value = myModelSelect.value;
+                // Automatically load the selected model
+                myLoadModelFromUrl(myModelSelect.value);
             }
         }
 
