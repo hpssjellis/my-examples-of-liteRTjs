@@ -1,0 +1,682 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>myWakeWordDetector</title>
+
+    <style>
+        /* General Layout */
+        body { 
+            font-family: Arial, sans-serif; 
+            display: flex; 
+            flex-direction: column; 
+            align-items: center; 
+            margin: 20px; 
+            background-color: #f0f0f0; 
+        }
+        #myContainer { 
+            max-width: 480px; 
+            width: 100%; 
+            background: white; 
+            padding: 20px; 
+            border-radius: 8px; 
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.1); 
+            margin-bottom: 20px;
+        }
+        /* Buttons */
+        .myButton { 
+            background-color: #008080; /* Teal */
+            color: white; 
+            padding: 10px 15px; 
+            border: none; 
+            border-radius: 4px; 
+            cursor: pointer; 
+            font-size: 16px; 
+            margin-top: 10px; 
+            width: 100%; 
+            box-sizing: border-box;
+            transition: background-color 0.3s;
+        }
+        .myButton:hover { 
+            background-color: #006666; 
+        }
+        .myButton:disabled { 
+            background-color: #ccc; 
+            cursor: not-allowed; 
+        }
+        /* Status and Input */
+        .myStatus { 
+            margin-top: 10px; 
+            font-weight: bold; 
+            color: #333; 
+            text-align: center; 
+            padding: 10px; 
+            border-radius: 4px; 
+            background-color: #f0ffff;
+            border: 1px solid #b3cccc;
+        }
+        .myInput { 
+            width: 100%; 
+            padding: 8px; 
+            border: 1px solid #ccc; 
+            border-radius: 4px; 
+            box-sizing: border-box; 
+        }
+        .myGroup { 
+            border: 1px dashed #bbb; 
+            padding: 15px; 
+            border-radius: 4px; 
+            margin-top: 15px; 
+        }
+        #myPredictionResult {
+            text-align: center;
+            font-size: 1.5em;
+            font-weight: bold;
+            margin-top: 15px;
+            min-height: 40px;
+            color: #008080;
+        }
+        #myWaveform {
+            width: 100%;
+            height: 50px;
+            border: 1px solid #ddd;
+            border-radius: 4px;
+            margin-top: 10px;
+            background-color: #eee;
+        }
+    </style>
+    
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@0.0.1-alpha.9/dist/tf-tflite.min.js"></script>
+</head>
+<body>
+
+    <script>
+        // =================================================================
+        // 🚀 EDGE IMPULSE MODEL CONFIGURATION
+        // =================================================================
+        const myModelConfig = {
+            myDefaultUrl: './tflite/other/ei-ei-v202-xiao-sounds-0unknown-1no-2yes-esp32-nn-classifier-tensorflow-lite-float32-model.12.tflite', 
+            
+            // Edge Impulse Audio Settings
+            myTargetSampleRate: 16000,      // 16 kHz
+            myWindowSizeMs: 400,            // 400ms window
+            myWindowStride: 30,             // 30ms stride between predictions (not MFCC frames!)
+            
+            // Calculated values
+            myWindowSizeSamples: 16000 * 0.4,  // 6400 samples for 400ms
+            myStrideSamples: 16000 * 0.03,     // 480 samples for 30ms stride between predictions
+            
+            // MFCC Configuration - FIXED to match model input of 260
+            myNumMfccCoeffs: 13,            // Number of MFCC coefficients per frame
+            myNumMelFilters: 26,            // Number of Mel filterbanks
+            myNumFrames: 20,                // FIXED: 20 frames to get 13×20=260 features
+            myFftSize: 512,                 // FFT window size
+            myLowFreq: 300,                 // Low frequency cutoff
+            myHighFreq: 8000,               // High frequency cutoff
+            
+            myLabels: ['unknown', 'no', 'yes'],
+        };
+
+        // The model expects exactly 260 features (20 frames × 13 MFCCs)
+        const myExpectedFeatures = myModelConfig.myNumFrames * myModelConfig.myNumMfccCoeffs;
+        
+        // Calculate stride between MFCC frames within a window
+        // frame_stride = (window_samples - fft_size) / (num_frames - 1)
+        const myMfccFrameStride = Math.floor((myModelConfig.myWindowSizeSamples - myModelConfig.myFftSize) / (myModelConfig.myNumFrames - 1));
+        
+        console.log(`Model expects: ${myExpectedFeatures} features (${myModelConfig.myNumFrames} frames × ${myModelConfig.myNumMfccCoeffs} MFCCs)`);
+        console.log(`MFCC frame stride within 400ms window: ${myMfccFrameStride} samples (${(myMfccFrameStride/16).toFixed(1)}ms)`);
+
+        // =================================================================
+        // ⚙️ INTERNAL VARIABLES 
+        // =================================================================
+        let myTfLiteModel = null;
+        let myAudioContext = null;
+        let myStream = null;
+        let myScriptProcessor = null;
+        let myRawAudioBuffer = [];
+        let myFeatureBuffer = null;
+        
+        let myBrowserRate = 0;
+        let myResampleRatio = 0;
+
+        let myStatusElement = null;
+        let myPredictionElement = null;
+        let myFileInput = null;
+        let myUrlInput = null;
+        let myWaveformCanvas = null;
+        let myWaveformContext = null;
+
+        // =================================================================
+        // 🏠 HTML SETUP
+        // =================================================================
+        
+        function myCreateDOM() {
+            const myContainer = document.createElement('div');
+            myContainer.id = 'myContainer';
+            
+            const myTitle = document.createElement('h1');
+            myTitle.style.fontSize = '1.5em';
+            myTitle.style.fontWeight = 'bold';
+            myTitle.style.marginBottom = '15px';
+            myTitle.style.textAlign = 'center';
+            myTitle.textContent = 'Edge Impulse Wake Word Detector';
+            myContainer.appendChild(myTitle);
+
+            myStatusElement = document.createElement('p');
+            myStatusElement.id = 'myStatusMessage';
+            myStatusElement.className = 'myStatus';
+            myStatusElement.textContent = 'Select a model loading method to start.';
+            myContainer.appendChild(myStatusElement);
+            
+            myWaveformCanvas = document.createElement('canvas');
+            myWaveformCanvas.id = 'myWaveform';
+            myWaveformCanvas.width = 440;
+            myWaveformCanvas.height = 50;
+            myContainer.appendChild(myWaveformCanvas);
+            myWaveformContext = myWaveformCanvas.getContext('2d');
+            
+            const myControlsDiv = document.createElement('div');
+            myControlsDiv.id = 'myControls';
+
+            const myFileGroup = document.createElement('div');
+            myFileGroup.className = 'myGroup';
+            myFileGroup.style.borderColor = '#008080';
+            myFileGroup.style.backgroundColor = '#f0faff';
+
+            const myFileLabel = document.createElement('p');
+            myFileLabel.style.fontWeight = 'bold';
+            myFileLabel.textContent = `1. Load From Computer File (.tflite):`;
+            myFileGroup.appendChild(myFileLabel);
+            
+            myFileInput = document.createElement('input'); 
+            myFileInput.type = 'file';
+            myFileInput.id = 'myFileInput';
+            myFileInput.accept = '.tflite';
+            myFileInput.style.marginTop = '10px';
+            myFileInput.onchange = myLoadFromFile; 
+            myFileGroup.appendChild(myFileInput);
+            myControlsDiv.appendChild(myFileGroup);
+
+            const myDefaultUrlButton = document.createElement('button');
+            myDefaultUrlButton.className = 'myButton';
+            myDefaultUrlButton.textContent = `2. Load Default URL (${myModelConfig.myDefaultUrl.split('/').pop()})`;
+            myDefaultUrlButton.onclick = myLoadFromDefaultUrl;
+            myControlsDiv.appendChild(myDefaultUrlButton);
+
+            const myUrlGroup = document.createElement('div');
+            myUrlGroup.className = 'myGroup';
+
+            const myUrlLabel = document.createElement('p');
+            myUrlLabel.style.fontWeight = 'bold';
+            myUrlLabel.textContent = '3. Load From Custom URL:';
+            myUrlGroup.appendChild(myUrlLabel);
+
+            myUrlInput = document.createElement('input');
+            myUrlInput.type = 'text';
+            myUrlInput.id = 'myUrlInput';
+            myUrlInput.value = myModelConfig.myDefaultUrl; 
+            myUrlInput.placeholder = 'Enter .tflite URL here';
+            myUrlInput.className = 'myInput';
+            myUrlInput.style.marginTop = '8px';
+            myUrlGroup.appendChild(myUrlInput);
+
+            const myCustomUrlButton = document.createElement('button');
+            myCustomUrlButton.className = 'myButton';
+            myCustomUrlButton.textContent = 'Load Custom URL and Start Microphone';
+            myCustomUrlButton.onclick = myLoadFromCustomUrl;
+            myUrlGroup.appendChild(myCustomUrlButton);
+            
+            myControlsDiv.appendChild(myUrlGroup);
+
+            const myResetButton = document.createElement('button');
+            myResetButton.className = 'myButton';
+            myResetButton.textContent = 'Reset / Stop Microphone';
+            myResetButton.onclick = myResetApplication;
+            myResetButton.style.marginTop = '25px'; 
+            myControlsDiv.appendChild(myResetButton);
+            
+            myContainer.appendChild(myControlsDiv);
+            document.body.appendChild(myContainer);
+
+            myPredictionElement = document.createElement('p');
+            myPredictionElement.id = 'myPredictionResult';
+            myPredictionElement.textContent = 'Inference not started.';
+            document.body.appendChild(myPredictionElement);
+        }
+        
+        window.onload = myCreateDOM; 
+
+        // =================================================================
+        // 💻 MODEL LOADING
+        // =================================================================
+        
+        function myGetAllControls() {
+            return [
+                ...document.querySelectorAll('.myButton'),
+                myFileInput,
+                myUrlInput
+            ];
+        }
+
+        function myDisableControls(myDisabled) {
+            myGetAllControls().forEach(myEl => myEl.disabled = myDisabled);
+        }
+
+        async function myLoadFromDefaultUrl() {
+            await myLoadModelAndStartMic(myModelConfig.myDefaultUrl);
+        }
+
+        async function myLoadFromCustomUrl() {
+            const myCustomUrl = myUrlInput.value.trim();
+            if (myCustomUrl) {
+                await myLoadModelAndStartMic(myCustomUrl);
+            } else {
+                myStatusElement.textContent = 'Error: Please enter a valid URL in the custom URL field.';
+            }
+        }
+
+        async function myLoadFromFile() {
+            const mySelectedFile = myFileInput.files[0];
+            if (mySelectedFile) {
+                await myLoadModelAndStartMic(mySelectedFile);
+            } else {
+                myDisableControls(false); 
+                myStatusElement.textContent = 'Please select a .tflite file first or choose another method.';
+            }
+        }
+
+        async function myLoadModelAndStartMic(mySource) {
+            myStopAudioProcessing(); 
+            myDisableControls(true);
+
+            const mySourceType = typeof mySource === 'string' ? 'URL' : 'File';
+            const myDisplayPath = typeof mySource === 'string' ? mySource : mySource.name;
+            
+            myStatusElement.textContent = `Loading model from ${mySourceType}: ${myDisplayPath}...`;
+            
+            let myModelSource = mySource; 
+
+            try {
+                if (mySourceType === 'File') {
+                    myModelSource = await new Promise((myResolve, myReject) => {
+                        const myReader = new FileReader();
+                        myReader.onload = () => myResolve(myReader.result);
+                        myReader.onerror = myReject;
+                        myReader.readAsArrayBuffer(mySource);
+                    });
+                    myStatusElement.textContent = `File read into buffer. Loading model...`;
+                }
+
+                myTfLiteModel = await tflite.loadTFLiteModel(myModelSource);
+                
+                myStatusElement.textContent = 'Model loaded successfully! Initializing microphone...';
+                console.log(`TFLite Model Loaded from ${mySourceType}: ${myDisplayPath}`);
+
+                await mySetupMicrophone();
+
+            } catch (myError) {
+                myStatusElement.textContent = `Failed to load model from ${mySourceType}. Check the console (F12) for details.`;
+                console.error('Model loading error:', myError);
+                
+                myDisableControls(false);
+            }
+        }
+
+        // =================================================================
+        // 🎤 MICROPHONE AND AUDIO PROCESSING
+        // =================================================================
+
+        async function mySetupMicrophone() {
+            try {
+                if (!myAudioContext) {
+                    myAudioContext = new (window.AudioContext || window.webkitAudioContext)();
+                }
+                if (myAudioContext.state === 'suspended') {
+                    await myAudioContext.resume();
+                }
+
+                myStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false });
+                const myMicSource = myAudioContext.createMediaStreamSource(myStream);
+                
+                myBrowserRate = myAudioContext.sampleRate;
+                myResampleRatio = myBrowserRate / myModelConfig.myTargetSampleRate; 
+
+                myScriptProcessor = myAudioContext.createScriptProcessor(4096, 1, 1); 
+                myScriptProcessor.onaudioprocess = myProcessAudioBuffer;
+
+                myMicSource.connect(myScriptProcessor);
+                myScriptProcessor.connect(myAudioContext.destination);
+
+                myStatusElement.textContent = `Mic active (${myBrowserRate}Hz → ${myModelConfig.myTargetSampleRate}Hz). Listening for wake words...`;
+                myDisableControls(false); 
+
+            } catch (myError) {
+                myStatusElement.textContent = `Error accessing microphone: ${myError.message}.`;
+                console.error('Microphone access error:', myError);
+                myDisableControls(false);
+            }
+        }
+        
+        function myResampleAudio(myInputBuffer) {
+            // Linear interpolation resampling
+            const myOutputLength = Math.floor(myInputBuffer.length / myResampleRatio);
+            const myResampled = [];
+            
+            for (let i = 0; i < myOutputLength; i++) {
+                const srcIdx = i * myResampleRatio;
+                const srcIdxFloor = Math.floor(srcIdx);
+                const srcIdxCeil = Math.min(srcIdxFloor + 1, myInputBuffer.length - 1);
+                const frac = srcIdx - srcIdxFloor;
+                
+                const sample = myInputBuffer[srcIdxFloor] * (1 - frac) + myInputBuffer[srcIdxCeil] * frac;
+                myResampled.push(sample);
+            }
+            
+            return myResampled;
+        }
+
+        function myProcessAudioBuffer(myAudioEvent) {
+            if (!myTfLiteModel || myAudioContext.state !== 'running') return;
+
+            const myInputBuffer = myAudioEvent.inputBuffer.getChannelData(0);
+            myDrawWaveform(myInputBuffer);
+            
+            // Resample and add to buffer
+            const myResampled = myResampleAudio(myInputBuffer);
+            myRawAudioBuffer.push(...myResampled);
+            
+            // Process 400ms windows with 30ms stride
+            while (myRawAudioBuffer.length >= myModelConfig.myWindowSizeSamples) {
+                const myWindow = myRawAudioBuffer.slice(0, myModelConfig.myWindowSizeSamples);
+                
+                myFeatureBuffer = myGenerateMFCC(myWindow);
+                myRunInference();
+                
+                // Slide by stride amount (30ms = 480 samples)
+                myRawAudioBuffer.splice(0, myModelConfig.myStrideSamples);
+            }
+            
+            myStatusElement.textContent = `Listening... (Buffer: ${myRawAudioBuffer.length}/${myModelConfig.myWindowSizeSamples} samples)`;
+        }
+        
+        // =================================================================
+        // 🎵 MFCC FEATURE EXTRACTION
+        // =================================================================
+        
+        function myGenerateMFCC(myAudioWindow) {
+            // Normalize audio
+            const myNormalized = myNormalizeAudio(myAudioWindow);
+            
+            // Extract exactly 20 MFCC frames from the 400ms window
+            const myMfccFeatures = [];
+            const myFrameSize = myModelConfig.myFftSize; // 512 samples
+            
+            // Calculate stride to get exactly 20 frames across the window
+            // stride = (window_length - frame_size) / (num_frames - 1)
+            const myFrameStride = Math.floor((myNormalized.length - myFrameSize) / (myModelConfig.myNumFrames - 1));
+            
+            for (let frameIdx = 0; frameIdx < myModelConfig.myNumFrames; frameIdx++) {
+                const startPos = frameIdx * myFrameStride;
+                const endPos = startPos + myFrameSize;
+                
+                if (endPos <= myNormalized.length) {
+                    const myFrame = myNormalized.slice(startPos, endPos);
+                    const myMfcc = myComputeMFCCForFrame(myFrame);
+                    myMfccFeatures.push(...myMfcc);
+                }
+            }
+            
+            // Ensure we have exactly 260 features (pad or truncate if needed)
+            while (myMfccFeatures.length < myExpectedFeatures) {
+                myMfccFeatures.push(0);
+            }
+            if (myMfccFeatures.length > myExpectedFeatures) {
+                myMfccFeatures.length = myExpectedFeatures;
+            }
+            
+            console.log(`Generated ${myMfccFeatures.length} MFCC features (${myMfccFeatures.length / myModelConfig.myNumMfccCoeffs} frames × ${myModelConfig.myNumMfccCoeffs} coeffs)`);
+            
+            return new Float32Array(myMfccFeatures);
+        }
+        
+        function myNormalizeAudio(myBuffer) {
+            // Remove DC offset
+            let sum = 0;
+            for (let i = 0; i < myBuffer.length; i++) {
+                sum += myBuffer[i];
+            }
+            const mean = sum / myBuffer.length;
+            
+            const normalized = [];
+            let maxAbs = 0;
+            for (let i = 0; i < myBuffer.length; i++) {
+                const val = myBuffer[i] - mean;
+                normalized.push(val);
+                maxAbs = Math.max(maxAbs, Math.abs(val));
+            }
+            
+            // Scale to [-1, 1]
+            if (maxAbs > 0) {
+                for (let i = 0; i < normalized.length; i++) {
+                    normalized[i] /= maxAbs;
+                }
+            }
+            
+            return normalized;
+        }
+        
+        function myComputeMFCCForFrame(myFrame) {
+            // Apply Hamming window
+            const myWindowed = myApplyHammingWindow(myFrame);
+            
+            // Compute FFT power spectrum
+            const myPowerSpectrum = myComputePowerSpectrum(myWindowed);
+            
+            // Apply Mel filterbank
+            const myMelEnergies = myApplyMelFilterbank(myPowerSpectrum);
+            
+            // Compute DCT to get MFCCs
+            const myMfcc = myComputeDCT(myMelEnergies);
+            
+            return myMfcc.slice(0, myModelConfig.myNumMfccCoeffs);
+        }
+        
+        function myApplyHammingWindow(myFrame) {
+            const N = myFrame.length;
+            const myWindowed = [];
+            for (let n = 0; n < N; n++) {
+                const window = 0.54 - 0.46 * Math.cos(2 * Math.PI * n / (N - 1));
+                myWindowed.push(myFrame[n] * window);
+            }
+            return myWindowed;
+        }
+        
+        function myComputePowerSpectrum(myFrame) {
+            // Simple FFT using DFT (slow but works for small sizes)
+            const N = myFrame.length;
+            const halfN = Math.floor(N / 2) + 1;
+            const myPower = [];
+            
+            for (let k = 0; k < halfN; k++) {
+                let real = 0, imag = 0;
+                for (let n = 0; n < N; n++) {
+                    const angle = -2 * Math.PI * k * n / N;
+                    real += myFrame[n] * Math.cos(angle);
+                    imag += myFrame[n] * Math.sin(angle);
+                }
+                myPower.push(real * real + imag * imag);
+            }
+            
+            return myPower;
+        }
+        
+        function myApplyMelFilterbank(myPowerSpectrum) {
+            const myNumFilters = myModelConfig.myNumMelFilters;
+            const mySampleRate = myModelConfig.myTargetSampleRate;
+            const myFftSize = myModelConfig.myFftSize;
+            const myLowFreq = myModelConfig.myLowFreq;
+            const myHighFreq = myModelConfig.myHighFreq;
+            
+            // Convert Hz to Mel
+            const melLow = 2595 * Math.log10(1 + myLowFreq / 700);
+            const melHigh = 2595 * Math.log10(1 + myHighFreq / 700);
+            
+            // Create equally spaced Mel points
+            const melPoints = [];
+            for (let i = 0; i <= myNumFilters + 1; i++) {
+                melPoints.push(melLow + (melHigh - melLow) * i / (myNumFilters + 1));
+            }
+            
+            // Convert Mel back to Hz
+            const hzPoints = melPoints.map(mel => 700 * (Math.pow(10, mel / 2595) - 1));
+            
+            // Convert Hz to FFT bin
+            const binPoints = hzPoints.map(hz => Math.floor((myFftSize + 1) * hz / mySampleRate));
+            
+            // Apply triangular filters
+            const myFilterBank = [];
+            for (let m = 0; m < myNumFilters; m++) {
+                let energy = 0;
+                const left = binPoints[m];
+                const center = binPoints[m + 1];
+                const right = binPoints[m + 2];
+                
+                for (let k = left; k < center; k++) {
+                    if (k < myPowerSpectrum.length) {
+                        energy += myPowerSpectrum[k] * (k - left) / (center - left);
+                    }
+                }
+                for (let k = center; k < right; k++) {
+                    if (k < myPowerSpectrum.length) {
+                        energy += myPowerSpectrum[k] * (right - k) / (right - center);
+                    }
+                }
+                
+                myFilterBank.push(Math.log(Math.max(energy, 1e-10)));
+            }
+            
+            return myFilterBank;
+        }
+        
+        function myComputeDCT(myMelEnergies) {
+            const N = myMelEnergies.length;
+            const myMfcc = [];
+            
+            for (let k = 0; k < myModelConfig.myNumMfccCoeffs; k++) {
+                let sum = 0;
+                for (let n = 0; n < N; n++) {
+                    sum += myMelEnergies[n] * Math.cos(Math.PI * k * (n + 0.5) / N);
+                }
+                myMfcc.push(sum);
+            }
+            
+            return myMfcc;
+        }
+
+        // =================================================================
+        // 📉 VISUALIZATION AND INFERENCE
+        // =================================================================
+        
+        function myDrawWaveform(myBuffer) {
+            const myWidth = myWaveformCanvas.width;
+            const myHeight = myWaveformCanvas.height;
+            const myCtx = myWaveformContext;
+
+            myCtx.clearRect(0, 0, myWidth, myHeight);
+            myCtx.fillStyle = '#f0faff';
+            myCtx.fillRect(0, 0, myWidth, myHeight);
+            myCtx.strokeStyle = '#008080';
+            myCtx.lineWidth = 1;
+
+            myCtx.beginPath();
+            const mySliceWidth = myWidth * 1.0 / myBuffer.length;
+            let x = 0;
+
+            for(let i = 0; i < myBuffer.length; i++) {
+                const v = myBuffer[i];
+                const y = myHeight / 2 + v * (myHeight / 2);
+
+                if(i === 0) {
+                    myCtx.moveTo(x, y);
+                } else {
+                    myCtx.lineTo(x, y);
+                }
+                x += mySliceWidth;
+            }
+
+            myCtx.lineTo(myWidth, myHeight / 2);
+            myCtx.stroke();
+        }
+
+        function myRunInference() {
+            tf.tidy(() => {
+                if (!myTfLiteModel || !myFeatureBuffer) return;
+                
+                const myInputTensor = tf.tensor(myFeatureBuffer).reshape([1, myFeatureBuffer.length]); 
+                console.log('Input tensor shape:', myInputTensor.shape);
+
+                const myOutputTensor = myTfLiteModel.predict(myInputTensor);
+                myPostProcessClassification(myOutputTensor);
+            }); 
+        }
+        
+        function myPostProcessClassification(myOutputTensor) {
+            const myProbabilities = myOutputTensor.dataSync();
+            const myBestIndex = myProbabilities.indexOf(Math.max(...myProbabilities));
+            const myBestLabel = myModelConfig.myLabels[myBestIndex];
+            const myConfidence = myProbabilities[myBestIndex];
+
+            let myDisplayResult;
+            let myDisplayColor;
+
+            if ((myBestLabel === 'yes' || myBestLabel === 'no') && myConfidence > 0.7) {
+                myDisplayResult = `🎯 DETECTED: "${myBestLabel.toUpperCase()}" (${(myConfidence * 100).toFixed(1)}%)`;
+                myDisplayColor = '#e53e3e'; 
+            } else {
+                myDisplayResult = `${myBestLabel} (${(myConfidence * 100).toFixed(1)}%)`;
+                myDisplayColor = '#008080'; 
+            }
+            
+            console.log(`Prediction: ${myBestLabel} | Confidence: ${myConfidence.toFixed(4)} | All: [${Array.from(myProbabilities).map(p => p.toFixed(3)).join(', ')}]`);
+            
+            myPredictionElement.textContent = myDisplayResult;
+            myPredictionElement.style.color = myDisplayColor;
+        }
+        
+        // =================================================================
+        // 🧹 RESET FUNCTIONS
+        // =================================================================
+        
+        function myResetApplication() {
+            myStopAudioProcessing();
+            myTfLiteModel = null;
+            
+            myPredictionElement.textContent = 'Inference not started.';
+            myPredictionElement.style.color = '#008080';
+            myStatusElement.textContent = 'Application Reset. Select a model loading method to start.';
+            myDisableControls(false); 
+            console.log('Wake Word Detection app reset.');
+        }
+
+        function myStopAudioProcessing() {
+            if (myStream) {
+                myStream.getTracks().forEach(track => track.stop());
+                myStream = null;
+            }
+            if (myAudioContext && myAudioContext.state !== 'closed') {
+                myAudioContext.close();
+                myAudioContext = null;
+            }
+            myRawAudioBuffer = [];
+            myFeatureBuffer = null;
+            if (myWaveformContext && myWaveformCanvas) {
+                myWaveformContext.clearRect(0, 0, myWaveformCanvas.width, myWaveformCanvas.height);
+            }
+        }
+    </script>
+</body>
+</html>
