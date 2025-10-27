@@ -1,0 +1,1004 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Unified Edge Impulse Model Detector</title>
+    <style>
+        body {
+            font-family: sans-serif;
+            margin: 20px;
+            background-color: #f0f4f8;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+            min-height: 100vh;
+        }
+        #myMainContainer {
+            max-width: 800px;
+            width: 100%;
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 6px 15px rgba(0, 0, 0, 0.15);
+        }
+        h1 {
+            text-align: center;
+            color: #3c4043;
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+        h2 {
+            font-size: 1.5em;
+            color: #3c4043;
+            margin-top: 10px;
+            margin-bottom: 10px;
+        }
+        #myInstructions {
+            text-align: center;
+            color: #5f6368;
+            margin-bottom: 20px;
+            font-size: 0.95em;
+        }
+        #myVideo {
+             display: none;
+         }
+        .myButton {
+            background-color: #1a73e8;
+            color: white;
+            padding: 12px 24px;
+            border: none;
+            border-radius: 8px;
+            cursor: pointer;
+            font-size: 16px;
+            margin: 5px;
+            transition: background-color 0.3s;
+            font-weight: 600;
+        }
+        .myButton:hover {
+             background-color: #155cb8;
+         }
+        .myButton:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .myButton.stop {
+            background-color: #d93025;
+        }
+        .myButton.stop:hover {
+            background-color: #b02419;
+        }
+        #myControlSection {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        #myStatusMessage {
+            font-size: 1em;
+            margin: 15px 0;
+            color: #3c4043;
+            font-weight: 500;
+            text-align: center;
+            padding: 12px;
+            background-color: #e6f7ff;
+            border: 1px solid #90caff;
+            border-radius: 8px;
+        }
+        #myCanvasContainer {
+            position: relative;
+            text-align: center;
+            margin-top: 20px;
+        }
+        #myCanvas {
+             border: 3px solid #1a73e8;
+            border-radius: 8px;
+             background-color: #333;
+             width: 100%;
+             height: auto;
+            max-width: 600px;
+             aspect-ratio: 1 / 1;
+            display: block;
+            margin: 0 auto;
+            transition: border-color 0.3s;
+        }
+        #myCanvas.drag-over {
+            border-color: #0f9d58;
+            border-style: dashed;
+            border-width: 4px;
+            background-color: #e8f5e9;
+        }
+        #myDropOverlay {
+            position: absolute;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 100%;
+            max-width: 600px;
+            height: 100%;
+            background-color: rgba(15, 157, 88, 0.1);
+            border: 4px dashed #0f9d58;
+            border-radius: 8px;
+            display: none;
+            justify-content: center;
+            align-items: center;
+            pointer-events: none;
+        }
+        #myDropOverlay.active {
+            display: flex;
+        }
+        #myDropText {
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #0f9d58;
+            background-color: white;
+            padding: 20px 40px;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        }
+        .myModelInfo {
+            text-align: center;
+            margin-top: 15px;
+            padding: 12px;
+            background-color: #f8f9fa;
+            border-radius: 8px;
+            border: 1px solid #dee2e6;
+        }
+        .myInfoLabel {
+            font-size: 0.85em;
+            color: #6c757d;
+            font-weight: 600;
+            display: block;
+            margin-bottom: 5px;
+        }
+        .myInfoValue {
+            font-size: 0.95em;
+            color: #212529;
+            font-family: monospace;
+        }
+        .myInputGroup {
+            display: flex;
+            gap: 5px;
+            margin-bottom: 10px;
+        }
+        .myInputGroup input[type="text"] {
+            flex-grow: 1;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            font-size: 16px;
+        }
+        #myLabelEditor {
+            width: 100%;
+            height: 80px;
+            padding: 10px;
+            box-sizing: border-box;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 14px;
+            margin-bottom: 15px;
+        }
+        #myResultDisplay {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            background-color: #e6ffe6;
+            border: 2px solid #0f9d58;
+            text-align: center;
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #0f9d58;
+            display: none;
+        }
+        #myResultDisplay.active {
+            display: block;
+        }
+        #myResultLabel {
+            font-size: 1.8em;
+            color: #0c8046;
+            margin-top: 5px;
+            display: block;
+        }
+        #myResultConfidence {
+            font-size: 1em;
+            color: #3c4043;
+            display: block;
+            margin-top: 5px;
+        }
+    </style>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs@4.17.0/dist/tf.min.js"></script>
+    <script src="https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-tflite@0.0.1-alpha.9/dist/tf-tflite.min.js"></script>
+</head>
+<body>
+    <script>
+        // =================================================================
+        // 🚀 DEFAULT CONFIGURATION (FOMO Model)
+        // =================================================================
+        const myDefaultConfig = {
+            myDefaultUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/MINST.tflite',
+            myInputResolution: 320,
+            myGridScaleFactor: 8,
+            myConfidenceThreshold: 0.5,
+            myClassLabels: ['background', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9'],
+            myInputChannels: 3,
+            myModelType: 'fomo', // 'fomo' or 'classification'
+            myGithubRepoPath: 'hpssjellis/my-examples-of-liteRTjs/main/public/tflite' // user/repo/branch/path
+        };
+
+        // =================================================================
+        // ⚙️ GLOBAL VARIABLES
+        // =================================================================
+        let myVideoElement = null;
+        let myIsWebcamReady = false;
+        let myAnimationFrameId = null;
+        let myStatusElement = null;
+        let myStartButton = null;
+        let myStopButton = null;
+        let myCanvas = null;
+        let myContext = null;
+        let myDropOverlay = null;
+        let myModelInfo = null;
+        let myUrlInput = null;
+        let myFileInput = null;
+        let myLabelEditor = null;
+        let myResultDisplay = null;
+        let myModelSelect = null;
+
+        let myModel = null;
+        let myCurrentConfig = {...myDefaultConfig};
+        let myCurrentModelName = 'Default Model';
+        let myCurrentModelSize = 0;
+
+        // =================================================================
+        // 🏠 HTML SETUP
+        // =================================================================
+        
+        // Helper function to create the reference footer
+        function myCreateReferenceFooter(myContainer) {
+            const myFooterDiv = document.createElement('div');
+            // Inline style for separation and centering, as requested
+            myFooterDiv.style.cssText = 'margin-top: 30px; padding-top: 20px; border-top: 1px solid #ccc; text-align: center;';
+
+            const myTitle = document.createElement('h2');
+            myTitle.textContent = 'Reference';
+            myFooterDiv.appendChild(myTitle);
+
+            // Helper for simple link paragraphs
+            const myCreateLinkParagraph = (myText, myHref, myLinkText) => {
+                const myP = document.createElement('p');
+                myP.textContent = myText;
+                const myA = document.createElement('a');
+                myA.href = myHref;
+                myA.textContent = myLinkText;
+                myP.appendChild(myA);
+                return myP;
+            };
+
+            myFooterDiv.appendChild(myCreateLinkParagraph(
+                'My main liteRTjs Index ',
+                'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/index.html',
+                ' liteRTjs '
+            ));
+
+            myFooterDiv.appendChild(myCreateLinkParagraph(
+                'My liteRTjs Github ',
+                'https://github.com/hpssjellis/my-examples-of-liteRTjs',
+                ' my-examples-of-liteRTjs '
+            ));
+
+            const myGithubP = document.createElement('p');
+            myGithubP.textContent = 'You can find more of my work on my ';
+            const myGithubA = document.createElement('a');
+            myGithubA.href = 'https://github.com/hpssjellis';
+            myGithubA.textContent = ' hpssjellis ';
+            myGithubP.appendChild(myGithubA);
+            // Append the rest of the text
+            myGithubP.appendChild(document.createTextNode(' GitHub page:'));
+            myFooterDiv.appendChild(myGithubP);
+
+            const myLinkedInP = document.createElement('p');
+            myLinkedInP.textContent = ' By Jeremy Ellis ';
+            const myLinkedInA = document.createElement('a');
+            myLinkedInA.href = 'https://ca.linkedin.com/in/jeremy-ellis-4237a9bb';
+            myLinkedInA.textContent = ' LinkedIn ';
+            myLinkedInP.appendChild(myLinkedInA);
+            myLinkedInP.appendChild(document.createElement('br'));
+            myFooterDiv.appendChild(myLinkedInP);
+
+            myContainer.appendChild(myFooterDiv);
+        }
+
+        function myCreateDOM() {
+            const myMainContainer = document.createElement('div');
+            myMainContainer.id = 'myMainContainer';
+
+            const myTitle = document.createElement('h1');
+            myTitle.textContent = 'Edge Impulse Model Detector';
+            myMainContainer.appendChild(myTitle);
+
+            const myInstructions = document.createElement('div');
+            myInstructions.id = 'myInstructions';
+            myInstructions.innerHTML = 'Load **FOMO** or **Classification** models via URL, File, or Drag & Drop<br><small>Auto-detects model type and properties. Edit labels below.</small>';
+            myMainContainer.appendChild(myInstructions);
+
+            // Model Select Dropdown
+            myModelSelect = document.createElement('select');
+            myModelSelect.style.cssText = 'width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 8px; font-size: 16px; background-color: white; margin-bottom: 15px;';
+            myModelSelect.innerHTML = '<option value="">Loading models from GitHub...</option>';
+            myModelSelect.onchange = myHandleModelSelect;
+            myMainContainer.appendChild(myModelSelect);
+
+            // URL Upload
+            const myUrlGroup = document.createElement('div');
+            myUrlGroup.className = 'myInputGroup';
+            myUrlInput = document.createElement('input');
+            myUrlInput.type = 'text';
+            myUrlInput.placeholder = 'Paste Model URL (.tflite or .lite)';
+            myUrlInput.value = myDefaultConfig.myDefaultUrl;
+            myUrlGroup.appendChild(myUrlInput);
+            const myUrlButton = document.createElement('button');
+            myUrlButton.className = 'myButton';
+            myUrlButton.textContent = 'Load from URL';
+            myUrlButton.onclick = () => myLoadModelFromUrl(myUrlInput.value);
+            myUrlGroup.appendChild(myUrlButton);
+            myMainContainer.appendChild(myUrlGroup);
+
+            // File Input
+            myFileInput = document.createElement('input');
+            myFileInput.type = 'file';
+            myFileInput.style.marginBottom = '15px';
+            myFileInput.setAttribute('accept', '.tflite,.lite');
+            myFileInput.onchange = myHandleFileInput;
+            myMainContainer.appendChild(myFileInput);
+
+            // Model info display
+            myModelInfo = document.createElement('div');
+            myModelInfo.className = 'myModelInfo';
+            myModelInfo.innerHTML = `
+                <span class="myInfoLabel">Model:</span>
+                <span class="myInfoValue" id="myModelName">No model loaded</span><br>
+                <span class="myInfoLabel">Type:</span>
+                <span class="myInfoValue" id="myModelType">Unknown</span><br>
+                <span class="myInfoLabel">Size:</span>
+                <span class="myInfoValue" id="myModelSize">N/A</span><br>
+                <span class="myInfoLabel">Config:</span>
+                <span class="myInfoValue" id="myModelConfig">N/A</span>
+            `;
+            myMainContainer.appendChild(myModelInfo);
+
+            // Labels Textarea
+            const myLabelHeader = document.createElement('div');
+            myLabelHeader.style.cssText = 'font-size: 0.9em; margin-top: 15px; margin-bottom: 5px; font-weight: bold; color: #3c4043;';
+            myLabelHeader.textContent = 'Class Labels (Comma-separated)';
+            myMainContainer.appendChild(myLabelHeader);
+
+            myLabelEditor = document.createElement('textarea');
+            myLabelEditor.id = 'myLabelEditor';
+            myLabelEditor.placeholder = 'Enter labels here (e.g., background, Object1, Object2)';
+            myLabelEditor.oninput = myUpdateConfigFromLabels;
+            myMainContainer.appendChild(myLabelEditor);
+
+            // Control section
+            const myControlSection = document.createElement('div');
+            myControlSection.id = 'myControlSection';
+
+            myStatusElement = document.createElement('div');
+            myStatusElement.id = 'myStatusMessage';
+            myStatusElement.textContent = 'Click "Start" to begin';
+            myControlSection.appendChild(myStatusElement);
+
+            myStartButton = document.createElement('button');
+            myStartButton.className = 'myButton';
+            myStartButton.textContent = 'Start Webcam & Load Default Model';
+            myStartButton.onclick = myStartAll;
+            myControlSection.appendChild(myStartButton);
+
+            myStopButton = document.createElement('button');
+            myStopButton.className = 'myButton stop';
+            myStopButton.textContent = 'Stop Webcam';
+            myStopButton.onclick = myStopAll;
+            myStopButton.disabled = true;
+            myControlSection.appendChild(myStopButton);
+
+            myMainContainer.appendChild(myControlSection);
+
+            // Hidden video element
+            myVideoElement = document.createElement('video');
+            myVideoElement.id = 'myVideo';
+            myVideoElement.setAttribute('playsinline', '');
+            myVideoElement.setAttribute('autoplay', '');
+            myMainContainer.appendChild(myVideoElement);
+
+            // Canvas container with drop overlay
+            const myCanvasContainer = document.createElement('div');
+            myCanvasContainer.id = 'myCanvasContainer';
+
+            myCanvas = document.createElement('canvas');
+            myCanvas.id = 'myCanvas';
+            myCanvas.width = myCurrentConfig.myInputResolution;
+            myCanvas.height = myCurrentConfig.myInputResolution;
+            myContext = myCanvas.getContext('2d');
+            myCanvasContainer.appendChild(myCanvas);
+
+            myDropOverlay = document.createElement('div');
+            myDropOverlay.id = 'myDropOverlay';
+            const myDropText = document.createElement('div');
+            myDropText.id = 'myDropText';
+            myDropText.textContent = 'Drop .tflite or .lite file here';
+            myDropOverlay.appendChild(myDropText);
+            myCanvasContainer.appendChild(myDropOverlay);
+
+            myMainContainer.appendChild(myCanvasContainer);
+
+            // Classification Result Display
+            myResultDisplay = document.createElement('div');
+            myResultDisplay.id = 'myResultDisplay';
+            myResultDisplay.innerHTML = 'Classification Result:<span id="myResultLabel">Awaiting Input...</span><span id="myResultConfidence"></span>';
+            myMainContainer.appendChild(myResultDisplay);
+            
+            // Add the new reference footer before appending the main container to body
+            myCreateReferenceFooter(myMainContainer);
+
+            document.body.appendChild(myMainContainer);
+
+            mySetupDragAndDrop();
+            myUpdateLabelEditor();
+            myLoadGithubModels(); // Load models from GitHub
+        }
+        window.onload = myCreateDOM;
+
+        // =================================================================
+        // 📦 GITHUB MODEL LOADER
+        // =================================================================
+
+        async function myLoadGithubModels() {
+            try {
+                // Parse the GitHub path
+                const myPathParts = myDefaultConfig.myGithubRepoPath.split('/');
+                const myUser = myPathParts[0];
+                const myRepo = myPathParts[1];
+                const myBranch = myPathParts[2];
+                const myFolderPath = myPathParts.slice(3).join('/');
+                
+                // GitHub API URL
+                const myApiUrl = `https://api.github.com/repos/${myUser}/${myRepo}/contents/${myFolderPath}?ref=${myBranch}`;
+                
+                const myResponse = await fetch(myApiUrl);
+                if (!myResponse.ok) {
+                    throw new Error(`GitHub API error: ${myResponse.status}`);
+                }
+                
+                const myFiles = await myResponse.json();
+                
+                // Filter for .tflite and .lite files
+                const myModelFiles = myFiles.filter(myFile =>
+                    myFile.name.endsWith('.tflite') || myFile.name.endsWith('.lite')
+                );
+                
+                if (myModelFiles.length === 0) {
+                    myModelSelect.innerHTML = '<option value="">No models found in repository</option>';
+                    return;
+                }
+                
+                // Populate select box
+                myModelSelect.innerHTML = '<option value="">-- Select a Model --</option>';
+                
+                myModelFiles.forEach(myFile => {
+                    const myOption = document.createElement('option');
+                    
+                    // Build proper GitHub Pages URL
+                    const myGithubPagesUrl = `https://${myUser}.github.io/${myRepo}/${myFolderPath}/${myFile.name}`;
+                    
+                    myOption.value = myGithubPagesUrl;
+                    myOption.textContent = myFile.name;
+                    myModelSelect.appendChild(myOption);
+                });
+                
+            } catch (myError) {
+                console.error('Failed to load GitHub models:', myError);
+                myModelSelect.innerHTML = '<option value="">Failed to load models (check console)</option>';
+            }
+        }
+
+        function myHandleModelSelect() {
+            if (myModelSelect.value) {
+                myUrlInput.value = myModelSelect.value;
+                // Automatically load the selected model
+                myLoadModelFromUrl(myModelSelect.value);
+            }
+        }
+
+        // =================================================================
+        // 🎯 DRAG AND DROP / FILE INPUT HANDLERS
+        // =================================================================
+
+        function mySetupDragAndDrop() {
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(myEventName => {
+                document.body.addEventListener(myEventName, myPreventDefaults, false);
+            });
+
+            function myPreventDefaults(myEvent) {
+                myEvent.preventDefault();
+                myEvent.stopPropagation();
+            }
+
+            ['dragenter', 'dragover'].forEach(myEventName => {
+                myCanvas.addEventListener(myEventName, () => {
+                    myCanvas.classList.add('drag-over');
+                    myDropOverlay.classList.add('active');
+                }, false);
+            });
+
+            ['dragleave', 'drop'].forEach(myEventName => {
+                myCanvas.addEventListener(myEventName, () => {
+                    myCanvas.classList.remove('drag-over');
+                    myDropOverlay.classList.remove('active');
+                }, false);
+            });
+
+            myCanvas.addEventListener('drop', myHandleDrop, false);
+        }
+
+        function myHandleDrop(myEvent) {
+            const myDataTransfer = myEvent.dataTransfer;
+            const myDroppedFiles = myDataTransfer.files;
+
+            if (myDroppedFiles.length > 0) {
+                const myFile = myDroppedFiles[0];
+                if (myFile.name.endsWith('.tflite') || myFile.name.endsWith('.lite')) {
+                    myLoadModelFromFile(myFile);
+                } else {
+                    myStatusElement.textContent = 'Error: Please drop a .tflite or .lite file';
+                }
+            }
+        }
+
+        function myHandleFileInput(myEvent) {
+            const myFile = myEvent.target.files[0];
+            if (myFile) {
+                myLoadModelFromFile(myFile);
+            }
+        }
+
+        // =================================================================
+        // 🔍 CONFIGURATION AND LABEL MANAGEMENT
+        // =================================================================
+        
+        function myAutoDetectConfig(myModel) {
+            try {
+                const myDetectedConfig = {...myDefaultConfig};
+                
+                // --- 1. Detect Input Size and Channels ---
+                const myInputTensor = myModel.getSignatureDef().inputs[Object.keys(myModel.getSignatureDef().inputs)[0]];
+                
+                if (myInputTensor && myInputTensor.shape && myInputTensor.shape.length === 4) {
+                    const myHeight = myInputTensor.shape[1];
+                    const myWidth = myInputTensor.shape[2];
+                    const myChannels = myInputTensor.shape[3];
+                    
+                    if (myHeight === myWidth && myHeight > 0) myDetectedConfig.myInputResolution = myHeight;
+                    if (myChannels === 1 || myChannels === 3) myDetectedConfig.myInputChannels = myChannels;
+                }
+                
+                // --- 2. Detect Model Type from Output Shape ---
+                const myOutputTensor = myModel.getSignatureDef().outputs[Object.keys(myModel.getSignatureDef().outputs)[0]];
+                const myOutputShape = myOutputTensor.shape;
+                
+                if (myOutputShape.length === 4) {
+                    // FOMO Model: [1, gridH, gridW, numClasses]
+                    myDetectedConfig.myModelType = 'fomo';
+                    
+                    const myGridH = myOutputShape[1];
+                    const myNumClasses = myOutputShape[3];
+                    
+                    if (myGridH > 0 && myDetectedConfig.myInputResolution > 0) {
+                        const myCalculatedFactor = myDetectedConfig.myInputResolution / myGridH;
+                        if (myCalculatedFactor > 0 && Number.isInteger(myCalculatedFactor)) {
+                            myDetectedConfig.myGridScaleFactor = myCalculatedFactor;
+                        }
+                    }
+                    
+                    if (myNumClasses > 0 && myNumClasses !== myCurrentConfig.myClassLabels.length) {
+                        // Reset labels to default FOMO format if count is mismatched
+                        myDetectedConfig.myClassLabels = ['background'];
+                        for (let i = 1; i < myNumClasses; i++) {
+                            myDetectedConfig.myClassLabels.push(`Object${i}`);
+                        }
+                    } else {
+                        // Keep current labels if the count matches (user preference preserved)
+                        myDetectedConfig.myClassLabels = myCurrentConfig.myClassLabels.slice(0, myNumClasses);
+                    }
+                    
+                } else if (myOutputShape.length === 2) {
+                    // Classification Model: [1, numClasses]
+                    myDetectedConfig.myModelType = 'classification';
+                    
+                    const myNumClasses = myOutputShape[1];
+                    
+                    if (myNumClasses > 0 && myNumClasses !== myCurrentConfig.myClassLabels.length) {
+                        // Reset labels to default Classification format if count is mismatched
+                        myDetectedConfig.myClassLabels = [];
+                        for (let i = 0; i < myNumClasses; i++) {
+                            myDetectedConfig.myClassLabels.push(`Class${i}`);
+                        }
+                    } else {
+                         // Keep current labels if the count matches (user preference preserved)
+                        myDetectedConfig.myClassLabels = myCurrentConfig.myClassLabels.slice(0, myNumClasses);
+                    }
+                } else {
+                    console.warn('Unknown output shape:', myOutputShape);
+                    myDetectedConfig.myModelType = 'unknown';
+                }
+                
+                // Update canvas size
+                myCanvas.width = myDetectedConfig.myInputResolution;
+                myCanvas.height = myDetectedConfig.myInputResolution;
+                
+                return myDetectedConfig;
+            } catch (myError) {
+                console.error('Auto-detection error:', myError);
+                return {...myDefaultConfig};
+            }
+        }
+        
+        function myUpdateModelInfoDisplay() {
+            document.getElementById('myModelName').textContent = myCurrentModelName;
+            document.getElementById('myModelType').textContent = myCurrentConfig.myModelType.toUpperCase();
+            
+            // Format file size
+            let mySizeText = 'N/A';
+            if (myCurrentModelSize > 0) {
+                if (myCurrentModelSize < 1024) {
+                    mySizeText = `${myCurrentModelSize} bytes`;
+                } else if (myCurrentModelSize < 1024 * 1024) {
+                    mySizeText = `${(myCurrentModelSize / 1024).toFixed(2)} KB`;
+                } else {
+                    mySizeText = `${(myCurrentModelSize / (1024 * 1024)).toFixed(2)} MB`;
+                }
+            }
+            document.getElementById('myModelSize').textContent = mySizeText;
+            
+            let myConfigText = `${myCurrentConfig.myInputResolution}x${myCurrentConfig.myInputResolution}, ` +
+                `${myCurrentConfig.myInputChannels === 3 ? 'RGB' : 'Grayscale'}, ` +
+                `Classes:${myCurrentConfig.myClassLabels.length}`;
+            
+            if (myCurrentConfig.myModelType === 'fomo') {
+                myConfigText += `, Grid:${myCurrentConfig.myGridScaleFactor}`;
+            }
+            
+            document.getElementById('myModelConfig').textContent = myConfigText;
+            
+            // Show/hide classification result display
+            if (myCurrentConfig.myModelType === 'classification') {
+                myResultDisplay.classList.add('active');
+            } else {
+                myResultDisplay.classList.remove('active');
+            }
+            
+            myUpdateLabelEditor();
+        }
+        
+        function myUpdateLabelEditor() {
+            if (myLabelEditor) {
+                myLabelEditor.value = myCurrentConfig.myClassLabels.join(', ');
+            }
+        }
+        
+        function myUpdateConfigFromLabels() {
+            if (myLabelEditor) {
+                const myNewLabels = myLabelEditor.value
+                    .split(',')
+                    .map(myLabel => myLabel.trim())
+                    .filter(myLabel => myLabel.length > 0);
+                
+                if (myModel && myNewLabels.length === myCurrentConfig.myClassLabels.length) {
+                    myCurrentConfig.myClassLabels = myNewLabels;
+                    myStatusElement.textContent = `Labels updated to: ${myNewLabels.join(', ')}`;
+                } else if (myModel) {
+                    myStatusElement.textContent = `Warning: Label count must be ${myCurrentConfig.myClassLabels.length}. Current: ${myNewLabels.length}`;
+                }
+            }
+        }
+        
+        // =================================================================
+        // 💻 MODEL LOADING
+        // =================================================================
+        
+        async function myLoadModel(mySource, myModelName) {
+            myStopAll(); // Stop webcam and clear canvas/results
+            myStatusElement.textContent = `Loading model: ${myModelName}...`;
+
+            try {
+                // tflite.loadTFLiteModel handles both URL (string) and ArrayBuffer
+                myModel = await tflite.loadTFLiteModel(mySource);
+                myCurrentModelName = myModelName;
+                
+                myCurrentConfig = myAutoDetectConfig(myModel);
+                myUpdateModelInfoDisplay();
+                
+                myStatusElement.textContent = `Model loaded: ${myModelName} (${myCurrentConfig.myModelType.toUpperCase()}). Ready.`;
+                if (myIsWebcamReady) {
+                    myRunInferenceLoop();
+                }
+
+            } catch (myError) {
+                myModel = null;
+                myCurrentModelName = 'No model loaded';
+                myCurrentModelSize = 0;
+                myUpdateModelInfoDisplay();
+                myStatusElement.textContent = `Error: Failed to load model. Check console for details.`;
+                console.error('Model loading error:', myError);
+            }
+        }
+        
+        async function myLoadModelFromUrl(myUrl) {
+            if (!myUrl.endsWith('.tflite') && !myUrl.endsWith('.lite')) {
+                myStatusElement.textContent = 'Error: URL must end with .tflite or .lite';
+                return;
+            }
+            // Fetch to get file size for display
+            try {
+                const myResponse = await fetch(myUrl);
+                const myBlob = await myResponse.blob();
+                myCurrentModelSize = myBlob.size;
+            } catch (e) {
+                myCurrentModelSize = 0; // If fetch fails, size is unknown
+            }
+            
+            await myLoadModel(myUrl, myUrl.substring(myUrl.lastIndexOf('/') + 1));
+        }
+        
+        async function myLoadModelFromFile(myFile) {
+            myStatusElement.textContent = `Loading model from file: ${myFile.name}...`;
+            
+            try {
+                myCurrentModelSize = myFile.size;
+                
+                const myArrayBuffer = await new Promise((myResolve, myReject) => {
+                    const myReader = new FileReader();
+                    myReader.onload = () => myResolve(myReader.result);
+                    myReader.onerror = myReject;
+                    myReader.readAsArrayBuffer(myFile);
+                });
+                
+                // myLoadModel will handle model loading and config update
+                await myLoadModel(myArrayBuffer, myFile.name);
+
+            } catch (myError) {
+                myStatusElement.textContent = `Failed to load ${myFile.name}. Check console.`;
+                console.error('File loading error:', myError);
+            }
+        }
+        
+        // =================================================================
+        // 🚀 START/STOP & INFERENCE
+        // =================================================================
+        
+        async function myStartAll() {
+            myStartButton.disabled = true;
+            myStopButton.disabled = true;
+
+            try {
+                if (!myModel) {
+                    // Load the default model if none is loaded
+                    await myLoadModel(myDefaultConfig.myDefaultUrl, 'Default Model');
+                }
+                
+                // 1. Start Webcam
+                myStatusElement.textContent = 'Model loaded! Starting webcam...';
+                await myStartWebcam();
+                
+                // 2. Start Inference Loop
+                myStatusElement.textContent = `Running ${myCurrentConfig.myModelType} inference...`;
+                myStartButton.disabled = true; // Stays disabled while running
+                myStopButton.disabled = false;
+                
+            } catch (myError) {
+                myStatusElement.textContent = `Error: ${myError.message}`;
+                console.error('Startup error:', myError);
+                myStartButton.disabled = false; // Re-enable start on failure
+            }
+        }
+        
+        async function myStartWebcam() {
+            if (myIsWebcamReady) return;
+            
+            try {
+                const myStream = await navigator.mediaDevices.getUserMedia({
+                    video: {
+                        width: 640,
+                        height: 640,
+                        facingMode: 'user' // Use 'user' for front-facing, 'environment' for back
+                    },
+                    audio: false
+                });
+                
+                myVideoElement.srcObject = myStream;
+                await new Promise(myResolve => myVideoElement.onloadedmetadata = myResolve);
+                myVideoElement.play();
+                myIsWebcamReady = true;
+                
+                // Start the loop once the webcam is ready
+                if (myModel) myRunInferenceLoop();
+                
+            } catch (myError) {
+                throw new Error(`Webcam access failed: ${myError.message}`);
+            }
+        }
+        
+        function myStopWebcam() {
+            if (myAnimationFrameId) {
+                cancelAnimationFrame(myAnimationFrameId);
+                myAnimationFrameId = null;
+            }
+            if (myVideoElement && myVideoElement.srcObject) {
+                myVideoElement.srcObject.getTracks().forEach(myTrack => myTrack.stop());
+                myVideoElement.srcObject = null;
+            }
+            myIsWebcamReady = false;
+        }
+        
+        function myRunInferenceLoop() {
+            if (!myIsWebcamReady || !myModel) {
+                // If model or webcam is not ready, just stop
+                myAnimationFrameId = null;
+                return;
+            }
+            
+            const myInputSize = myCurrentConfig.myInputResolution;
+            const myStartTime = performance.now();
+            
+            tf.tidy(() => {
+                // Draw current video frame to canvas
+                // This draws the video and scales/crops it to the model's input size
+                myContext.drawImage(myVideoElement, 0, 0, myInputSize, myInputSize);
+                
+                // Create and preprocess the input tensor
+                let myInputTensor = tf.browser.fromPixels(myCanvas, myCurrentConfig.myInputChannels);
+                
+                // Resize (though canvas drawing already resizes), cast to float32, normalize, and add batch dim
+                let myNormalizedTensor = myInputTensor
+                    .resizeBilinear([myInputSize, myInputSize])
+                    .cast('float32')
+                    .div(255.0) // Normalize to [0, 1]
+                    .expandDims(0);
+                
+                // Run Prediction
+                const myOutputTensor = myModel.predict(myNormalizedTensor);
+                
+                // Route to appropriate post-processing based on model type
+                if (myCurrentConfig.myModelType === 'fomo') {
+                    myPostProcessFomo(myOutputTensor);
+                } else if (myCurrentConfig.myModelType === 'classification') {
+                    myPostProcessClassification(myOutputTensor);
+                }
+                
+                // Draw latency and other info
+                const myLatencyMs = performance.now() - myStartTime;
+                myContext.fillStyle = 'yellow';
+                myContext.font = '14px sans-serif';
+                myContext.textAlign = 'left';
+                myContext.fillText(`FPS: ${(1000 / myLatencyMs).toFixed(1)}`, 10, myInputSize - 10);
+                
+            });
+            
+            myAnimationFrameId = requestAnimationFrame(myRunInferenceLoop);
+        }
+        
+        // =================================================================
+        // 📊 POST-PROCESSING FUNCTIONS
+        // =================================================================
+        
+        function myPostProcessFomo(myOutputTensor) {
+            // Re-draw the video frame before drawing boxes/centroids
+            myContext.drawImage(myVideoElement, 0, 0, myCurrentConfig.myInputResolution, myCurrentConfig.myInputResolution);
+
+            const myPredictionData = myOutputTensor.dataSync();
+            const myOutputShape = myOutputTensor.shape;
+            const myNumClasses = myOutputShape[3];
+            const myGridH = myOutputShape[1];
+            const myGridW = myOutputShape[2];
+            
+            const myInputSize = myCurrentConfig.myInputResolution;
+            const myScaleFactor = myCurrentConfig.myGridScaleFactor;
+            const myCellSize = myInputSize / myGridW; // Should be equal to myScaleFactor if input=output grid size is used
+            
+            if (myCurrentConfig.myClassLabels.length !== myNumClasses) {
+                myStatusElement.textContent = `ERROR: Label count (${myCurrentConfig.myClassLabels.length}) != Model classes (${myNumClasses})`;
+                return;
+            }
+            
+            for (let i = 0; i < myGridH; i++) { // Grid Y
+                for (let j = 0; j < myGridW; j++) { // Grid X
+                    const myCellStartIndex = (i * myGridW * myNumClasses) + (j * myNumClasses);
+                    
+                    let myMaxProbability = 0;
+                    let myMaxClassIndex = 0;
+                    
+                    // Start from index 1 to skip 'background' (usually index 0 in FOMO)
+                    for (let k = 1; k < myNumClasses; k++) {
+                        const myProbability = myPredictionData[myCellStartIndex + k];
+                        if (myProbability > myMaxProbability) {
+                            myMaxProbability = myProbability;
+                            myMaxClassIndex = k;
+                        }
+                    }
+                    
+                    if (myMaxClassIndex !== 0 && myMaxProbability >= myCurrentConfig.myConfidenceThreshold) {
+                        // Centroid location in canvas coordinates
+                        const myCentroidX = (j * myScaleFactor) + (myScaleFactor / 2);
+                        const myCentroidY = (i * myScaleFactor) + (myScaleFactor / 2);
+                        const myLabel = myCurrentConfig.myClassLabels[myMaxClassIndex];
+                        
+                        // Draw Circle (Centroid)
+                        myContext.beginPath();
+                        myContext.arc(myCentroidX, myCentroidY, myCellSize * 0.4, 0, 2 * Math.PI);
+                        myContext.strokeStyle = 'lime';
+                        myContext.lineWidth = 2;
+                        myContext.stroke();
+                        
+                        // Draw Label
+                        myContext.font = 'bold 12px sans-serif';
+                        myContext.fillStyle = 'lime';
+                        myContext.textAlign = 'center';
+                        myContext.fillText(myLabel, myCentroidX, myCentroidY - (myCellSize * 0.4) - 2);
+                    }
+                }
+            }
+        }
+        
+        function myPostProcessClassification(myOutputTensor) {
+            const myNumClasses = myCurrentConfig.myClassLabels.length;
+            
+            if (myOutputTensor.shape[1] !== myNumClasses) {
+                myStatusElement.textContent = `ERROR: Model output (${myOutputTensor.shape[1]}) != Label count (${myNumClasses})`;
+                return;
+            }
+            
+            const myResult = myOutputTensor.squeeze().arraySync();
+            
+            let myMaxProbability = 0;
+            let myMaxClassIndex = 0;
+            
+            for (let i = 0; i < myResult.length; i++) {
+                if (myResult[i] > myMaxProbability) {
+                    myMaxProbability = myResult[i];
+                    myMaxClassIndex = i;
+                }
+            }
+            
+            const myLabel = myCurrentConfig.myClassLabels[myMaxClassIndex];
+            const myConfidence = (myMaxProbability * 100).toFixed(2);
+            
+            document.getElementById('myResultLabel').textContent = myLabel.toUpperCase();
+            document.getElementById('myResultConfidence').textContent = `${myConfidence}% Confidence`;
+
+            // Draw visual overlay on canvas
+            myContext.fillStyle = 'rgba(0, 0, 0, 0.6)';
+            myContext.fillRect(0, myCanvas.height - 40, myCanvas.width, 40);
+            myContext.font = 'bold 18px sans-serif';
+            myContext.fillStyle = 'white';
+            myContext.textAlign = 'center';
+            myContext.fillText(`${myLabel.toUpperCase()} (${myConfidence}%)`, myCanvas.width / 2, myCanvas.height - 15);
+        }
+        
+        function myStopAll() {
+            myStopWebcam();
+            
+            // Clear canvas
+            myContext.clearRect(0, 0, myCanvas.width, myCanvas.height);
+            myContext.fillStyle = '#333';
+            myContext.fillRect(0, 0, myCanvas.width, myCanvas.height);
+            
+            // Reset Classification display
+            if (myCurrentConfig.myModelType === 'classification') {
+                document.getElementById('myResultLabel').textContent = 'Awaiting Input...';
+                document.getElementById('myResultConfidence').textContent = '';
+            }
+            
+            myStatusElement.textContent = 'Stopped. Click "Start" or load a new model.';
+            myStartButton.disabled = false;
+            myStopButton.disabled = true;
+        }
+    </script>
+</body>
+</html>
