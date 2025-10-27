@@ -246,6 +246,7 @@
         let myModel = null;
         let myCurrentConfig = {...myDefaultConfig};
         let myCurrentModelName = 'Default Model';
+        let myCurrentModelSize = 0;
 
         // =================================================================
         // 🏠 HTML SETUP
@@ -302,6 +303,8 @@
                 <span class="myInfoValue" id="myModelName">No model loaded</span><br>
                 <span class="myInfoLabel">Type:</span>
                 <span class="myInfoValue" id="myModelType">Unknown</span><br>
+                <span class="myInfoLabel">Size:</span>
+                <span class="myInfoValue" id="myModelSize">N/A</span><br>
                 <span class="myInfoLabel">Config:</span>
                 <span class="myInfoValue" id="myModelConfig">N/A</span>
             `;
@@ -586,6 +589,19 @@
             document.getElementById('myModelName').textContent = myCurrentModelName;
             document.getElementById('myModelType').textContent = myCurrentConfig.myModelType.toUpperCase();
             
+            // Format file size
+            let mySizeText = 'N/A';
+            if (myCurrentModelSize > 0) {
+                if (myCurrentModelSize < 1024) {
+                    mySizeText = `${myCurrentModelSize} bytes`;
+                } else if (myCurrentModelSize < 1024 * 1024) {
+                    mySizeText = `${(myCurrentModelSize / 1024).toFixed(2)} KB`;
+                } else {
+                    mySizeText = `${(myCurrentModelSize / (1024 * 1024)).toFixed(2)} MB`;
+                }
+            }
+            document.getElementById('myModelSize').textContent = mySizeText;
+            
             let myConfigText = `${myCurrentConfig.myInputResolution}x${myCurrentConfig.myInputResolution}, ` +
                 `${myCurrentConfig.myInputChannels === 3 ? 'RGB' : 'Grayscale'}, ` +
                 `Classes:${myCurrentConfig.myClassLabels.length}`;
@@ -655,6 +671,11 @@
             }
             myStatusElement.textContent = `Loading model from URL...`;
             try {
+                // Fetch to get file size
+                const myResponse = await fetch(myUrl);
+                const myBlob = await myResponse.blob();
+                myCurrentModelSize = myBlob.size;
+                
                 await myLoadModel(myUrl, myUrl.substring(myUrl.lastIndexOf('/') + 1));
                 if (myIsWebcamReady) myStatusElement.textContent += ' (Inference running)';
             } catch (myError) {
@@ -666,6 +687,8 @@
             myStatusElement.textContent = `Loading model from file: ${myFile.name}...`;
             
             try {
+                myCurrentModelSize = myFile.size;
+                
                 const myArrayBuffer = await new Promise((myResolve, myReject) => {
                     const myReader = new FileReader();
                     myReader.onload = () => myResolve(myReader.result);
@@ -692,7 +715,7 @@
             }
         }
 
-        // =================================================================
+       // =================================================================
         // 🚀 START/STOP & INFERENCE
         // =================================================================
 
