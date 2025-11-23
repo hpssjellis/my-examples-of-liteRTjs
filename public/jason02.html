@@ -1,0 +1,185 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0" />
+    <title>LiteRT.js Depth Estimation Demo</title>
+    
+    <style>
+        body {
+            margin: 0;
+            padding: 0;
+            width: 100vw;
+            height: 100vh;
+            overflow: hidden;
+            background-color: #000;
+        }
+
+        /* The #output canvas isn't used in your provided JS, so I'm removing its style.
+           The #overlay and #webcam styles are kept for positioning. */
+        
+        #overlay {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            pointer-events: none;
+            z-index: 1;
+            opacity: 0.5;
+        }
+
+        #webcam {
+            position: absolute;
+            width: 100%;
+            height: 100%;
+            object-fit: cover;
+            z-index: 0;
+        }
+    </style>
+
+    <script type="module">
+        import * as LiteRT from 'https://cdn.jsdelivr.net/npm/@litertjs/core@0.2.1/+esm';
+        import * as LiteRTInterop from 'https://cdn.jsdelivr.net/npm/@litertjs/tfjs-interop/+esm';
+        import 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs/dist/tf.min.js';
+        import 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgpu/dist/tf-backend-webgpu.js';
+        
+        // Model configuration
+        const myModelUrl = 'https://huggingface.co/qualcomm/Depth-Anything-V2/resolve/main/Depth-Anything-V2_float.tflite';
+        let myModel = undefined;
+        
+        // Use descriptive, camelCase, my-prefixed variable names
+        const myVideoElement = document.getElementById('webcam');
+        const myOverlayCanvas = document.getElementById('overlay');
+        
+        /**
+         * Enable the webcam with video constraints.
+         */
+        async function myEnableWebcam() {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                console.error('Browser API navigator.mediaDevices.getUserMedia not available');
+                return;
+            }
+            
+            const myVideoConfig = {
+                'audio': false,
+                'video': {
+                    facingMode: 'user',
+                    // Only setting the video to a specified size for the sake of the demo.
+                    width: 640,
+                    height: 480
+                }
+            };
+            
+            try {
+                const myStream = await navigator.mediaDevices.getUserMedia(myVideoConfig);
+                myVideoElement.srcObject = myStream;
+                myVideoElement.onloadeddata = () => {
+                    console.log('Video data loaded');
+                };
+            } catch (e) {
+                console.error('Error enabling webcam:', e);
+            }
+        }
+        
+        
+        async function myLoadModelAndPredict() {
+            await myEnableWebcam();
+            
+            try {
+                // Wait for the video to be ready before continuing
+                await new Promise(resolve => myVideoElement.onloadedmetadata = resolve);
+
+                await tf.setBackend('webgpu');
+                await LiteRT.loadLiteRt('https://assets.codepen.io/48236/');
+                const myTfBackend = tf.backend();
+                LiteRT.setWebGpuDevice(myTfBackend.device);
+                
+                myModel = await LiteRT.loadAndCompile(myModelUrl, {
+                    accelerator: 'webgpu',
+                });
+                
+                // Start the prediction loop
+                myPredict();
+                
+            } catch (e) {
+                console.error('Error during model loading or setup:', e);
+            }
+        }
+        
+        
+        async function myPredict() {
+            if (myModel === undefined) {
+                // If model is not loaded yet, wait for next frame
+                requestAnimationFrame(myPredict);
+                return;
+            }
+
+            const myInputTensor = tf.tidy(() => {
+                return tf.browser.fromPixels(myVideoElement)
+                    .resizeBilinear([518, 518])
+                    .div(255.0)
+                    .expandDims();
+            });
+            
+            const myResults = LiteRTInterop.runWithTfjsTensors(myModel, myInputTensor);
+            const myOutputTensor = myResults[0];
+            
+            // Normalize output to 0-1 for display
+            const myMin = myOutputTensor.min();
+            const myMax = myOutputTensor.max();
+            const myNormalized = myOutputTensor.sub(myMin).div(myMax.sub(myMin)).squeeze();
+            
+            // Create RGB tensor for gradient visualization (Blue=Far, Green=Close)
+            const myZeros = tf.zerosLike(myNormalized);
+            const myBlueChannel = tf.sub(1, myNormalized);
+            const myRgbTensor = tf.stack([myZeros, myNormalized, myBlueChannel], 2);
+            
+            
+            // Calculate crop to emulate object-fit: cover
+            // Use local constants for clarity within this function
+            const videoRatio = myVideoElement.videoWidth / myVideoElement.videoHeight;
+            const windowRatio = window.innerWidth / window.innerHeight;
+            const scale = videoRatio / windowRatio;
+            
+            if (scale > 1) {
+                // Using inline style as per your preference
+                myOverlayCanvas.setAttribute('style', 'scale: ' + scale + ' 1');
+            } else {
+                myOverlayCanvas.setAttribute('style', 'scale: 1 ' + (1 / scale));
+            }
+            
+            tf.browser.draw(myRgbTensor.clipByValue(0, 1), myOverlayCanvas);
+            await tf.backend().queue.onSubmittedWorkDone();
+            
+            
+            // Cleanup: Dispose of all Tensors created in this prediction step
+            myMin.dispose();
+            myMax.dispose();
+            myNormalized.dispose();
+            myZeros.dispose();
+            myBlueChannel.dispose();
+            myRgbTensor.dispose();
+            for (const output of myResults) {
+                output.dispose();
+            }
+            myInputTensor.dispose();
+            
+            requestAnimationFrame(myPredict);
+        }
+        
+        // Start the process
+        myLoadModelAndPredict();
+    </script>
+</head>
+<body>
+    <video id="webcam" autoplay playsinline></video>
+    <canvas id="output"></canvas> 
+    <canvas id="overlay"></canvas>
+    
+    <section id="demos" style="display: none;">
+        <h1>LiteRT.js Depth Estimation Demo</h1>
+        <p>This demo performs real-time depth estimation.</p>
+    </section>
+</body>
+</html>
