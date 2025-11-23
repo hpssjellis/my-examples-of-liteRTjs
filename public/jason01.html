@@ -1,0 +1,183 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0" />
+  <meta name="author" content="Jason Mayes" />
+  <title>LiteRT.js Depth Estimation demo</title>
+  <link href='https://fonts.googleapis.com/css?family=Roboto:500,400italic,300,700,500italic,300italic,400' rel='stylesheet' type='text/css'>
+  <link rel="stylesheet" href="css/style.css" type="text/css" />
+
+<script>
+import * as LiteRT from 'https://cdn.jsdelivr.net/npm/@litertjs/core@0.2.1/+esm';
+import * as LiteRTInterop from 'https://cdn.jsdelivr.net/npm/@litertjs/tfjs-interop/+esm';
+import 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs/dist/tf.min.js';
+import 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgpu/dist/tf-backend-webgpu.js';
+
+
+// Model configuration
+const MODEL_URL = 'https://huggingface.co/qualcomm/Depth-Anything-V2/resolve/main/Depth-Anything-V2_float.tflite';
+let MODEL = undefined;
+const VIDEO = document.getElementById('webcam');
+const OVERLAY = document.getElementById('overlay');
+
+
+/**
+ * Enable the webcam with video constraints.
+ */
+function enableWebcam() {
+  if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+    console.error('Browser API navigator.mediaDevices.getUserMedia not available');
+    return;
+  }
+
+  const videoConfig = {
+    'audio': false,
+    'video': {
+      facingMode: 'user',
+      // Only setting the video to a specified size for the sake of the demo.
+      width: 640,
+      height: 480
+    }
+  };
+
+  navigator.mediaDevices.getUserMedia(videoConfig).then((stream) => {
+    VIDEO.srcObject = stream;
+    VIDEO.onloadeddata = () => {
+      console.log('Video data loaded');
+    };
+  });
+}
+
+
+async function load() {
+  enableWebcam();
+  try {
+    await tf.setBackend('webgpu');
+    await LiteRT.loadLiteRt('https://assets.codepen.io/48236/');
+    const TF_BACKEND = tf.backend();
+    LiteRT.setWebGpuDevice(TF_BACKEND.device);
+
+    MODEL = await LiteRT.loadAndCompile(MODEL_URL, {
+      accelerator: 'webgpu',
+    });
+
+    predict();
+
+  } catch (e) {
+    console.error(e);
+  }
+}
+
+
+async function predict() {
+  const inputTensor = tf.tidy(() => {
+
+    return tf.browser.fromPixels(VIDEO)
+        .resizeBilinear([518, 518])
+        .div(255.0)
+        .expandDims();
+  });
+
+  const results = LiteRTInterop.runWithTfjsTensors(MODEL, inputTensor);
+  const outputTensor = results[0];
+  
+  // Normalize output to 0-1 for display
+  const min = outputTensor.min();
+  const max = outputTensor.max();
+  const normalized = outputTensor.sub(min).div(max.sub(min)).squeeze();
+  
+  // Create RGB tensor for gradient visualization (Blue=Far, Green=Close)
+  const zeros = tf.zerosLike(normalized);
+  const blueChannel = tf.sub(1, normalized);
+  const rgbTensor = tf.stack([zeros, normalized, blueChannel], 2);
+
+
+  
+  // Calculate crop to emulate object-fit: cover
+  const videoRatio = VIDEO.videoWidth / VIDEO.videoHeight;
+  const windowRatio = window.innerWidth / window.innerHeight;
+  const scale = videoRatio / windowRatio;
+  
+  if (scale > 1) {
+    OVERLAY.setAttribute('style', 'scale: ' + scale + ' 1'); 
+  } else {
+    OVERLAY.setAttribute('style', 'scale: 1 ' + (1 / scale));
+  }
+  //await tf.browser.toPixels(rgbTensor.clipByValue(0,1), OVERLAY);
+ 
+  tf.browser.draw(rgbTensor.clipByValue(0,1), OVERLAY);
+  await tf.backend().queue.onSubmittedWorkDone();
+  
+  
+  //tf.browser.draw(rgbTensor.clipByValue(0,1), OVERLAY);
+  /**
+  const t = rgbTensor.clipByValue(0,1)
+  tf.browser.draw(t, OVERLAY);
+  await t.data();
+  t.dispose();
+  **/
+  
+  // Cleanup
+  min.dispose();
+  max.dispose();
+  normalized.dispose();
+  zeros.dispose();
+  blueChannel.dispose();
+  rgbTensor.dispose();
+  for (const output of results) {
+    output.dispose();
+  }
+  inputTensor.dispose();
+  requestAnimationFrame(predict);
+}
+
+
+load();
+
+</script>  
+
+  
+</head>
+body {
+  margin: 0;
+  padding: 0;
+  width: 100vw;
+  height: 100vh;
+  overflow: hidden;
+  background-color: #000;
+}
+
+#output {
+  z-index: 1;
+}
+
+#overlay {
+  position: absolute;
+  top: 0;
+  left: 0;
+  width: 100%;
+  height: 100%;
+  pointer-events: none;
+  z-index: 1;
+  opacity: 0.5;
+}
+
+#webcam {
+  position: absolute;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: 0;
+}
+
+  <video id="webcam" autoplay playsinline></video>
+  <canvas id="output"></canvas>
+  <canvas id="overlay"></canvas>
+  <section id="demos" class="invisible">
+    <h1>LiteRT.js Face Detection Demo</h1>
+    <p>Hold your face in front of your webcam to see real-time face detection.</p>
+  </section>
+  <script type="module" src="src/script.js"></script>
+</body>
+</html>
