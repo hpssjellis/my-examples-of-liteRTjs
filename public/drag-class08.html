@@ -61,14 +61,14 @@
         // 🚀 DEFAULT CONFIGURATION
         // =================================================================
         const myDefaultConfig = {
-            myDefaultUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/tflite/ei-1pen-dav-object-detection-tensorflow-lite-float32-model.4.lite',
-            myInputResolution: 240,
+            myDefaultUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/MINST.tflite',
+            myInputResolution: 320,
             myGridScaleFactor: 8,
             myConfidenceThreshold: 0.5,
-            myClassLabels: ['pen'],
+            myClassLabels: ['background', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9'],
             myInputChannels: 3,
-            myModelType: 'fomo', 
-            myGithubRepoPath: 'hpssjellis/my-examples-of-liteRTjs/main/public/tflite'
+            myModelType: 'fomo', // 'fomo' or 'classification'
+            myGithubRepoPath: 'hpssjellis/my-examples-of-liteRTjs/main/public/tflite' // user/repo/branch/path
         };
 
         // =================================================================
@@ -99,7 +99,8 @@
         async function mySetupLiteRT() {
             try {
                 // Must load LiteRT resources once
-                await LiteRT.loadLiteRt('https://assets.codepen.io/48236/'); 
+              //  await LiteRT.loadLiteRt('https://assets.codepen.io/48236/'); 
+                await LiteRT.loadLiteRt('https://cdn.jsdelivr.net/npm/@litertjs/core@0.2.1/wasm/');
                 console.log("LiteRT.js environment loaded successfully.");
             } catch (e) {
                 console.error("Failed to load LiteRT.js environment:", e);
