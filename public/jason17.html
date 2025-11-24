@@ -127,10 +127,10 @@
         /**
          * 🌟 NEW FUNCTION: Performs a complete reset of the application state.
          */
-        function myFullReset() {
+           function myFullReset() {
             myStopPredictionAndReset();
             
-            // Dispose of the currently loaded model
+            // 1. Dispose of the currently loaded model and clear state trackers
             if (myModel) {
                 try {
                     myModel.delete();
@@ -141,23 +141,22 @@
             }
             myLoadedModelUrl = '';
             
-            // Reset status displays
+            // 2. Clear UI status displays
             myStopLoadTimer('Ready');
             myAnalysisStatusSpan.textContent = 'N/A';
             myInputShapeSpan.textContent = 'N/A';
             myInputDtypeSpan.textContent = 'N/A';
             myOutputDetailsSpan.textContent = 'N/A';
 
-            // Reset controls
-            myLoadButton.disabled = false;
+            // 3. Reset input field and dropdown selection
+            myModelUrlInput.value = ''; // Clear the custom URL input
+            myModelSelect.selectedIndex = -1; // Deselect any dropdown option
+            
+            // 4. Re-enable controls
+            myLoadButton.disabled = true; // Disable load until a URL is entered or selected
+            myLoadButton.textContent = 'Enter Model URL to Load';
             myModelSelect.disabled = false;
             myCameraSelect.disabled = false;
-            
-            // Reset to the default model URL and trigger initial metadata load
-            if (myDepthModels.length > 0) {
-                 myModelUrlInput.value = myDepthModels[0].myUrl;
-            }
-            myPreLoadModelMetadata();
         }
 
 
