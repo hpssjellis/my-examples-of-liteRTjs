@@ -1,111 +1,464 @@
 <!DOCTYPE html>
 <html lang="en">
 <head>
-    <meta charset="UTF-8">
-    <title>LiteRT Model Details Viewer (Full Example)</title>
-</head>
-<body>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0" />
+    <title>LiteRT.js Multi-Model Depth Estimation Demo</title>
+    
+    <script type="module">
+        // Import all necessary modules
+        import * as LiteRT from 'https://cdn.jsdelivr.net/npm/@litertjs/core@0.2.1/+esm';
+        import * as LiteRTInterop from 'https://cdn.jsdelivr.net/npm/@litertjs/tfjs-interop/+esm';
+        import 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs/dist/tf.min.js';
+        import 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgpu/dist/tf-backend-webgpu.js';
+        
+        // --- Model Configuration Data (Simplified) ---
+        // Array of possible models for the select box. Input shape is now determined automatically.
+        const myDepthModels = [
+            // Depth Anything V2 family (Qualcomm) - Recommended, robust models
+            { 
+                myName: "Depth-Anything V2 Large", 
+                myUrl: 'https://huggingface.co/qualcomm/Depth-Anything-V2/resolve/main/Depth-Anything-V2_float.tflite'
+            },
+            { 
+                myName: "Depth-Anything V2 Small", 
+                myUrl: 'https://huggingface.co/qualcomm/Depth-Anything-V2-Small/resolve/main/Depth-Anything-V2-Small_float.tflite'
+            },
+            
+            // MobileNet-Depth family (Qualcomm) - Faster, smaller models
+            { 
+                myName: "MobileNet-Depth 256x256", 
+                myUrl: 'https://huggingface.co/qualcomm/MobileNet-Depth-Estimation/resolve/main/MobileNet-Depth-Estimation_float.tflite'
+            },
+            { 
+                myName: "MobileNet-Depth 512x512", 
+                myUrl: 'https://huggingface.co/qualcomm/MobileNet-Depth-Estimation/resolve/main/MobileNet-Depth-Estimation-512x512_float.tflite'
+            },
 
-    <h2>🖼️ Select Model</h2>
-    <select id="myModelSelector" onchange="myLoadAndShowDetails(this.value)">
-        <option value="">-- Select a Model --</option>
-        <option value="model_A.tflite">Model A (Image Classifier)</option>
-        <option value="model_B.tflite">Model B (Object Detector)</option>
-    </select>
+            // MiDaS family (PINTO Model Zoo conversions) - Popular alternatives
+            {
+                myName: "MiDaS v2.1 Small",
+                myUrl: 'https://huggingface.co/PINTO0309/MiDaS.tflite/resolve/main/midas_v2_small_256x256_float32.tflite'
+            },
+            {
+                myName: "MiDaS v3.1 Large",
+                myUrl: 'https://huggingface.co/PINTO0309/MiDaS.tflite/resolve/main/dpt_large_384x384_float32.tflite'
+            },
+            {
+                myName: "MiDaS v3.1 Hybrid",
+                myUrl: 'https://huggingface.co/PINTO0309/MiDaS.tflite/resolve/main/dpt_hybrid_384x384_float32.tflite'
+            },
 
-    ---
+            // Other Specialized Depth Models
+            {
+                myName: "Depth Resnet18",
+                myUrl: 'https://huggingface.co/PINTO0309/Depth-Estimation-with-Resnet18.tflite/resolve/main/model_float32.tflite'
+            },
+            {
+                myName: "Monocular Depth 256x256",
+                myUrl: 'https://huggingface.co/tensorflow/tfjs-models/resolve/main/depth-estimation/monocular-depth-256/model.tflite'
+            },
+            {
+                myName: "Monocular Depth 384x384",
+                myUrl: 'https://huggingface.co/tensorflow/tfjs-models/resolve/main/depth-estimation/monocular-depth-384/model.tflite'
+            }
+        ];
 
-    <h2>📋 Input Details</h2>
-    <div id="myDetailsDisplay" style="border: 1px solid #ccc; padding: 10px; margin-top: 10px; min-height: 50px;">
-        Select a model above to view its input requirements.
-    </div>
+        // --- Global Variables (my-prefixed) ---
+        let myModel = undefined;
+        let myIsPredicting = false;
+        let myTimerIntervalId = null; 
+        let myInitialPredictionStartTime = 0; 
+        let myCurrentInputShape = 0; // Set to 0 initially, will be read from model
+        let myModelName = ''; // To display in the status
 
-    <script>
-        // --- LiteRT Simulation and Logic ---
+        // --- DOM Element References ---
+        const myVideoElement = document.getElementById('webcam');
+        const myOverlayCanvas = document.getElementById('overlay');
+        const myLoadButton = document.getElementById('loadModelButton');
+        const myCameraSelect = document.getElementById('cameraSelect');
+        const myModelSelect = document.getElementById('modelSelect'); 
+        const myLoadStatusSpan = document.getElementById('myLoadStatus');
+        const myAnalysisStatusSpan = document.getElementById('myAnalysisStatus');
+        const myInputShapeSpan = document.getElementById('myInputShapeStatus');
 
-        // Get the display element using a descriptive variable name
-        const myDetailsDisplay = document.getElementById('myDetailsDisplay');
+        // --- Timer Functions ---
 
         /**
-         * Helper function to simulate the asynchronous LiteRT API call:
-         * model.getInputDetails()
-         * @param {string} myModelPath The model file path selected.
-         * @returns {Promise<Array<Object>>} A promise resolving to simulated ModelInputDetails.
+         * Starts a count-up timer in the load status span.
          */
-        function mySimulateLoadDetails(myModelPath) {
-            // In a real application, you would perform the actual LiteRT.js initialization, 
-            // loading, and compilation here.
-            
-            // Simulating network delay for realism (optional)
-            return new Promise(resolve => {
-                setTimeout(() => {
-                    if (myModelPath === 'model_A.tflite') {
-                        // Example details for a 224x224 RGB image
-                        resolve([
-                            {
-                                name: "input_image",
-                                shape: [1, 224, 224, 3], // [Batch, Height, Width, Channels]
-                                dtype: "float32"
-                            }
-                        ]);
-                    } else if (myModelPath === 'model_B.tflite') {
-                        // Example details for a 300x300 BGR image
-                        resolve([
-                            {
-                                name: "input_tensor",
-                                shape: [1, 300, 300, 3],
-                                dtype: "uint8"
-                            }
-                        ]);
-                    } else {
-                        resolve([]); // No details found or invalid model
-                    }
-                }, 500); // Wait 500ms
+        function myStartLoadTimer() {
+            let myStartTime = performance.now();
+            myLoadStatusSpan.textContent = '0.0s';
+
+            myTimerIntervalId = setInterval(() => {
+                let myElapsedTime = performance.now() - myStartTime;
+                myLoadStatusSpan.textContent = `${(myElapsedTime / 1000).toFixed(1)}s`;
+            }, 100);
+        }
+
+        /**
+         * Stops and clears the count-up timer for loading.
+         */
+        function myStopLoadTimer(myFinalMessage) {
+            if (myTimerIntervalId !== null) {
+                clearInterval(myTimerIntervalId);
+                myTimerIntervalId = null;
+            }
+            myLoadStatusSpan.textContent = myFinalMessage;
+        }
+        
+        // --- Utility Functions ---
+
+        /**
+         * Safely stops the prediction loop and disposes of the current model.
+         */
+        function myStopPredictionAndReset() {
+            if (myIsPredicting) {
+                myIsPredicting = false;
+            }
+            if (myModel) {
+                try {
+                    // Use LiteRT's disposal method
+                    myModel.delete();
+                } catch(e) {
+                    console.warn("Could not dispose of previous model gracefully:", e);
+                }
+                myModel = undefined;
+            }
+            myLoadButton.textContent = 'Load Model & Start';
+            myLoadButton.disabled = false;
+            myCameraSelect.disabled = false;
+            myModelSelect.disabled = false;
+            myStopLoadTimer('Ready');
+            myAnalysisStatusSpan.textContent = 'N/A';
+            myInputShapeSpan.textContent = 'N/A';
+            myInitialPredictionStartTime = 0;
+            myCurrentInputShape = 0;
+        }
+
+        /**
+         * Populates the model selection dropdown with pre-defined models.
+         */
+        function myPopulateModelSelect() {
+            myModelSelect.innerHTML = ''; 
+            myDepthModels.forEach((myModel, myIndex) => {
+                const myOption = document.createElement('option');
+                myOption.value = myModel.myUrl;
+                myOption.text = myModel.myName;
+                if (myIndex === 0) {
+                    myOption.selected = true;
+                }
+                myModelSelect.appendChild(myOption);
             });
         }
 
+
+        // --- Core Functions ---
+
         /**
-         * Loads the details for the selected model and updates the display div.
-         * This function is triggered by the 'onchange' event in the <select> tag.
-         * @param {string} mySelectedPath The model file path selected by the user.
+         * Populates the camera selection dropdown with available video input devices.
          */
-        async function myLoadAndShowDetails(mySelectedPath) {
-            if (!mySelectedPath) {
-                myDetailsDisplay.innerHTML = 'Select a model above to view its input requirements.';
+        async function myGetCameras() {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+                console.warn('enumerateDevices() not supported.');
                 return;
             }
 
-            myDetailsDisplay.innerHTML = 'Loading model details...';
-            
-            // Use await for the simulated asynchronous call
-            const myInputDetailsArray = await mySimulateLoadDetails(mySelectedPath);
+            try {
+                // Request media access first to get device labels
+                const myTempStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+                myTempStream.getTracks().forEach(track => track.stop());
 
-            // --- Constructing the display ---
+                const myDevices = await navigator.mediaDevices.enumerateDevices();
+                const myVideoDevices = myDevices.filter(myDevice => myDevice.kind === 'videoinput');
+                
+                myCameraSelect.innerHTML = '';
+                
+                if (myVideoDevices.length === 0) {
+                    myCameraSelect.innerHTML = '<option>No Camera Found</option>';
+                    myCameraSelect.disabled = true;
+                    return;
+                }
 
-            let myHtmlContent = `<h3 style="margin-top: 0;">Details for: ${mySelectedPath}</h3>`;
-
-            if (myInputDetailsArray.length === 0) {
-                myHtmlContent += '<p style="color: red;">Error: Could not load or find input details for this model.</p>';
-            } else {
-                myInputDetailsArray.forEach((myDetails, myIndex) => {
-                    // Create a readable shape string: e.g., "1 x 224 x 224 x 3"
-                    const myShapeString = myDetails.shape.join(' x ');
-                    
-                    myHtmlContent += `
-                        <div style="margin-bottom: 10px; padding: 8px; background-color: #f0f8ff; border-left: 4px solid #007bff;">
-                            <strong>Input ${myIndex + 1} Name:</strong> ${myDetails.name}
-                            <ul>
-                                <li>**Shape (Dimensions):** ${myShapeString}</li>
-                                <li>**Data Type:** ${myDetails.dtype}</li>
-                            </ul>
-                        </div>
-                    `;
+                myVideoDevices.forEach((myDevice, myIndex) => {
+                    const myOption = document.createElement('option');
+                    myOption.value = myDevice.deviceId;
+                    myOption.text = myDevice.label || `Camera ${myIndex + 1}`; 
+                    myCameraSelect.appendChild(myOption);
                 });
+
+                myCameraSelect.disabled = false;
+                
+            } catch (e) {
+                console.error('Error listing devices or getting stream:', e);
+                myCameraSelect.innerHTML = '<option>Access Denied or Error</option>';
+            }
+        }
+        
+        /**
+         * Enables the webcam using the currently selected device ID.
+         */
+        async function myEnableWebcam(myDeviceId) {
+            if (myVideoElement.srcObject) {
+                myVideoElement.srcObject.getTracks().forEach(track => track.stop());
+                myVideoElement.srcObject = null;
             }
 
-            // Update the display div content
-            myDetailsDisplay.innerHTML = myHtmlContent;
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                console.error('Browser API navigator.mediaDevices.getUserMedia not available');
+                return;
+            }
+            
+            const myVideoConfig = {
+                'audio': false,
+                'video': {
+                    deviceId: myDeviceId ? { exact: myDeviceId } : undefined,
+                    width: 640,
+                    height: 480
+                }
+            };
+            
+            try {
+                const myStream = await navigator.mediaDevices.getUserMedia(myVideoConfig);
+                myVideoElement.srcObject = myStream;
+                await new Promise(resolve => myVideoElement.onloadedmetadata = resolve);
+                myVideoElement.play(); 
+                console.log('Video stream started successfully.');
+            } catch (e) {
+                console.error('Error enabling webcam:', e);
+            }
         }
+
+        /**
+         * Loads the LiteRT environment and the Depth Estimation model, timing the steps.
+         */
+        async function myLoadModel() {
+            if (myIsPredicting || myLoadButton.disabled) return; 
+
+            myStopPredictionAndReset();
+
+            const mySelectedOption = myModelSelect.options[myModelSelect.selectedIndex];
+            const myModelUrl = mySelectedOption.value;
+            myModelName = mySelectedOption.text;
+
+            myLoadButton.textContent = 'Loading...';
+            myLoadButton.disabled = true;
+            myCameraSelect.disabled = true;
+            myModelSelect.disabled = true;
+            myAnalysisStatusSpan.textContent = 'Waiting for Model...';
+            myInputShapeSpan.textContent = '...';
+
+            try {
+                // 1. Start Webcam
+                await myEnableWebcam(myCameraSelect.value);
+
+                // 2. Start the LOAD timer
+                myStartLoadTimer();
+
+                // 3. Initialize LiteRT and set up WebGPU
+                console.log('Setting up WebGPU backend...');
+                await tf.setBackend('webgpu');
+            
+                // LiteRT load command (must be awaited)
+                await LiteRT.loadLiteRt('https://cdn.jsdelivr.net/npm/@litertjs/core@0.2.1/wasm/');
+            
+                const myTfBackend = tf.backend();
+                // Link LiteRT's WebGPU context to TF.js's
+                LiteRT.setWebGpuDevice(myTfBackend.device);
+                
+                console.log(`Loading and compiling model from: ${myModelUrl}`);
+                // LiteRT load and compile command (must be awaited)
+                myModel = await LiteRT.loadAndCompile(myModelUrl, {
+                    accelerator: 'webgpu',
+                });
+
+                // --- CHECK AND DISPLAY MODEL INPUT DETAILS ---
+                // This is the command you asked to implement:
+                const myInputDetails = myModel.getInputDetails();
+                
+                // For image models, the shape is typically [batch, height, width, channels]
+                if (myInputDetails.length > 0 && myInputDetails[0].shape.length >= 3) {
+                    // Use the height dimension (index 1) for the square shape
+                    myCurrentInputShape = myInputDetails[0].shape[1]; 
+                    // Update the UI
+                    myInputShapeSpan.textContent = `${myCurrentInputShape}x${myCurrentInputShape}`;
+                    console.log(`Model input shape detected: ${myCurrentInputShape}`);
+                } else {
+                    throw new Error("Could not determine model input shape from metadata.");
+                }
+                
+                // 4. Stop the LOAD timer and update status
+                myStopLoadTimer(`Loaded: ${myLoadStatusSpan.textContent}`);
+                
+                // 5. Start Prediction Loop and time the initial compilation delay
+                console.log('Model loaded. Starting prediction timer.');
+                myLoadButton.textContent = 'Compiling...';
+                myAnalysisStatusSpan.textContent = `Compiling...`;
+                myInitialPredictionStartTime = performance.now(); 
+
+                myIsPredicting = true;
+                myPredict();
+                
+            } catch (e) {
+                myStopLoadTimer('Error');
+                console.error('Error during model loading or setup:', e);
+                myLoadButton.textContent = 'Error Loading Model';
+            }
+        }
+        
+        /**
+         * Main prediction loop using requestAnimationFrame.
+         */
+        async function myPredict() {
+            if (myModel === undefined || !myIsPredicting || myCurrentInputShape === 0) {
+                return;
+            }
+
+            // --- Check if this is the first prediction run for timing ---
+            if (myInitialPredictionStartTime > 0) {
+                // Wait for the first WebGPU work to finish (initial compilation)
+                await tf.backend().queue.onSubmittedWorkDone();
+                
+                const myInitialDelay = performance.now() - myInitialPredictionStartTime;
+                myAnalysisStatusSpan.textContent = `Delay: ${(myInitialDelay / 1000).toFixed(2)}s`;
+                myLoadButton.textContent = 'Running';
+                myModelSelect.disabled = false; 
+                myInitialPredictionStartTime = 0; 
+            }
+
+
+            // Use tf.tidy to ensure Tensors are cleaned up correctly unless marked for saving
+            tf.tidy(() => {
+                const myStartTime = performance.now(); // Start frame time measurement
+                
+                const myInputTensor = tf.browser.fromPixels(myVideoElement)
+                    // The resize is now based on the dynamically determined myCurrentInputShape
+                    .resizeBilinear([myCurrentInputShape, myCurrentInputShape]) 
+                    .div(255.0)
+                    .expandDims();
+                
+                // LiteRT Interop command
+                const myResults = LiteRTInterop.runWithTfjsTensors(myModel, myInputTensor);
+                const myOutputTensor = myResults[0];
+                
+                // Post-processing and visualization (same as before)
+                const myMin = myOutputTensor.min();
+                const myMax = myOutputTensor.max();
+                const myNormalized = myOutputTensor.sub(myMin).div(myMax.sub(myMin)).squeeze();
+                
+                // Create RGB tensor for gradient visualization (Blue=Far, Green=Close)
+                const myZeros = tf.zerosLike(myNormalized);
+                const myBlueChannel = tf.sub(1, myNormalized);
+                const myRgbTensor = tf.stack([myZeros, myNormalized, myBlueChannel], 2);
+                
+                
+                // Calculate crop to emulate object-fit: cover
+                const videoRatio = myVideoElement.videoWidth / myVideoElement.videoHeight;
+                const windowRatio = 640 / 480; 
+                const scale = videoRatio / windowRatio;
+                
+                // Apply scaling via inline CSS
+                if (scale > 1) {
+                    myOverlayCanvas.style.scale = `${scale} 1`;
+                } else {
+                    myOverlayCanvas.style.scale = `1 ${1 / scale}`;
+                }
+                
+                // Draw with horizontal flip
+                tf.browser.draw(myRgbTensor.clipByValue(0, 1), myOverlayCanvas, { flipHorizontal: true });
+                
+                // Clean up LiteRT-managed tensors returned by runWithTfjsTensors
+                for (const output of myResults) {
+                    output.dispose();
+                }
+
+                // Update FPS/ms status
+                const myEndTime = performance.now();
+                const myFrameTime = myEndTime - myStartTime;
+                if (myInitialPredictionStartTime === 0) {
+                    myAnalysisStatusSpan.textContent = `${myFrameTime.toFixed(0)}ms / ${(1000 / myFrameTime).toFixed(1)} FPS`;
+                }
+            });
+            
+            // Only await submission for subsequent frames once initial compilation is done
+            if (myInitialPredictionStartTime === 0) {
+                await tf.backend().queue.onSubmittedWorkDone();
+            }
+            
+            requestAnimationFrame(myPredict);
+        }
+
+        /**
+         * Handles camera changes, stopping the current prediction and restarting the stream.
+         */
+        async function myCameraChangeHandler() {
+            // Stop prediction if it's running when the camera changes
+            if (myIsPredicting) {
+                myStopPredictionAndReset();
+            }
+            await myEnableWebcam(myCameraSelect.value);
+        }
+
+        /**
+         * Handles model changes, stopping the current prediction and resetting the UI.
+         */
+        function myModelChangeHandler() {
+            myStopPredictionAndReset();
+        }
+
+        // --- Initialization and Event Listeners (Static Links) ---
+        
+        // Static links as preferred
+        myLoadButton.onclick = myLoadModel;
+        myCameraSelect.onchange = myCameraChangeHandler;
+        myModelSelect.onchange = myModelChangeHandler; 
+
+        // Populate the select boxes on script load
+        myPopulateModelSelect(); 
+        myGetCameras();
+
+        // Initially try to enable the webcam 
+        myEnableWebcam();
     </script>
+</head>
+<body style="margin:0; padding:0; height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; background-color:#000;">
+    <div id="controls" style="position:relative; z-index:2; margin-bottom:10px; padding:5px; background:rgba(255, 255, 255, 0.9); display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:center; max-width: 90vw;">
+        <div>
+            <label for="cameraSelect">Camera:</label>
+            <select id="cameraSelect">
+                <option value="">Loading Cameras...</option>
+            </select>
+        </div>
+        
+        <div>
+            <label for="modelSelect">Model:</label>
+            <select id="modelSelect">
+                </select>
+        </div>
+
+        <button id="loadModelButton">Load Model & Start</button>
+        
+        <div style="font-size:12px; white-space:nowrap;">
+            Input Size: **<span id="myInputShapeStatus">N/A</span>**
+        </div>
+        <div style="font-size:12px; white-space:nowrap;">
+            Load Time: **<span id="myLoadStatus">Ready</span>**
+        </div>
+        <div style="font-size:12px; white-space:nowrap;">
+            Analysis Delay/FPS: **<span id="myAnalysisStatus">N/A</span>**
+        </div>
+    </div>
+
+    <div style="position:relative; width:640px; height:480px; border: 1px solid white; overflow:hidden;">
+        <video id="webcam" autoplay playsinline style="position:absolute; width:100%; height:100%; object-fit:cover; z-index:0;"></video>
+        <canvas id="output" style="position:absolute; width:100%; height:100%; z-index:0;"></canvas> 
+        <canvas id="overlay" style="position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:1; opacity:0.5;"></canvas>
+    </div>
+    
+    <section id="demos" style="display:none;">
+        <h1>LiteRT.js Depth Estimation Demo</h1>
+        <p>This demo performs real-time depth estimation.</p>
+    </section>
 </body>
 </html>
