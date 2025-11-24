@@ -1,0 +1,232 @@
+
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>MNIST Classification</title>
+
+
+
+<script type="module">
+import * as LiteRT from 'https://cdn.jsdelivr.net/npm/@litertjs/core@0.2.1/+esm';
+import * as LiteRTInterop from 'https://cdn.jsdelivr.net/npm/@litertjs/tfjs-interop/+esm';
+import * as tf from 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs/+esm';
+import 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgpu/+esm';
+import 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgl/+esm';
+
+const config = {
+  // FIX: Correct MNIST filename (verify the path on your repo)
+  modelUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/MINST.tflite',
+  threshold: 0.5,
+  labels: ['0','1','2','3','4','5','6','7','8','9'],
+  inputSize: 28,
+  inputChannels: 1
+};
+
+let model, isPredicting = false, timerId = null, startTime = 0;
+const video  = document.getElementById('video');
+const canvas = document.getElementById('canvas');
+const select = document.getElementById('camera');
+const btn    = document.getElementById('load');
+const status = document.getElementById('status');
+const result = document.getElementById('result');
+
+function startTimer() {
+  startTime = performance.now();
+  status.textContent = '0.0s';
+  timerId = setInterval(() => {
+    status.textContent = `${((performance.now() - startTime) / 1000).toFixed(1)}s`;
+  }, 100);
+}
+function stopTimer(msg) {
+  if (timerId) { clearInterval(timerId); timerId = null; }
+  status.textContent = msg;
+}
+
+async function getCameras() {
+  try {
+    await navigator.mediaDevices.getUserMedia({ video: true });
+    const devices = await navigator.mediaDevices.enumerateDevices();
+    const cameras = devices.filter(d => d.kind === 'videoinput');
+    select.innerHTML = '';
+    cameras.forEach((cam, i) => {
+      const opt = document.createElement('option');
+      opt.value = cam.deviceId;
+      opt.textContent = cam.label || `Camera ${i + 1}`;
+      select.appendChild(opt);
+    });
+  } catch (e) {
+    console.error('Camera error:', e);
+  }
+}
+
+async function startCamera(deviceId) {
+  if (video.srcObject) {
+    video.srcObject.getTracks().forEach(t => t.stop());
+  }
+  try {
+    const stream = await navigator.mediaDevices.getUserMedia({
+      video: deviceId ? { deviceId: { exact: deviceId } } : true
+    });
+    video.srcObject = stream;
+    await new Promise(res => { video.onloadedmetadata = res; });
+    await video.play(); // ensure playback starts
+  } catch (e) {
+    console.error('Camera start error:', e);
+  }
+}
+
+async function setBestBackend() {
+  // Prefer WebGPU; fallback to WebGL; then CPU
+  const backends = ['webgpu', 'webgl', 'cpu'];
+  for (const b of backends) {
+    try {
+      await tf.setBackend(b);
+      await tf.ready();
+      if (tf.getBackend() === b) return b;
+    } catch {}
+  }
+  return tf.getBackend();
+}
+
+async function loadModel() {
+  if (model || isPredicting) return;
+
+  // HTTPS check for camera/WebGPU
+  if (!(location.protocol === 'https:' || location.hostname === 'localhost')) {
+    alert('Please serve this page over HTTPS or localhost for camera/WebGPU to work.');
+    return;
+  }
+
+  btn.textContent = 'Loading...';
+  btn.disabled = true;
+  select.disabled = true;
+
+  try {
+    await startCamera(select.value);
+    startTimer();
+
+    const backendName = await setBestBackend();
+    console.log('TFJS backend:', backendName);
+
+    await LiteRT.loadLiteRt('https://cdn.jsdelivr.net/npm/@litertjs/core@0.2.1/wasm/');
+
+    // WebGPU device handoff (optional + guarded)
+    try {
+      const backend = tf.backend();
+      if (backend && backendName === 'webgpu' && backend.device) {
+        LiteRT.setWebGpuDevice(backend.device);
+      }
+    } catch (e) {
+      console.warn('WebGPU device handoff skipped:', e);
+    }
+
+    model = await LiteRT.loadAndCompile(config.modelUrl, {
+      accelerator: backendName === 'webgpu' ? 'webgpu' : 'auto'
+    });
+
+    const inputShape = model.getInputDetails()[0].shape; // [1, 28, 28, 1]
+    config.inputSize = inputShape[1];
+    config.inputChannels = inputShape[3];
+
+    stopTimer(`Loaded: ${status.textContent}`);
+    btn.textContent = 'Running';
+    isPredicting = true;
+    predict();
+
+  } catch (e) {
+    stopTimer('Error');
+    console.error('Load error:', e);
+    btn.textContent = 'Error';
+  }
+}
+
+async function predict() {
+  if (!model || !isPredicting) return;
+
+  let predTensor, confTensor;
+
+  const tensors = tf.tidy(() => {
+    let input = tf.browser.fromPixels(video);           // [H,W,3], uint8 -> tfjs int32/float32 internally
+    input = tf.image.resizeBilinear(input, [config.inputSize, config.inputSize]);
+
+    if (config.inputChannels === 1) {
+      input = input.mean(2, true);                      // [28,28,1]
+    }
+
+    // Normalize for float models; comment this out if your TFLite expects uint8
+    input = input.toFloat().div(255.0);
+
+    input = input.expandDims(0);                        // [1,28,28,1]
+
+    const outputs = LiteRTInterop.runWithTfjsTensors(model, input);
+    const probs = outputs[0].softmax();                 // assume logits on output[0]
+
+    const pred = probs.argMax(1);
+    const conf = probs.max();
+
+    // Preview (scaled back to [0,255] so toPixels shows something)
+    const preview = input.squeeze().mul(255).clipByValue(0, 255);
+    tf.browser.toPixels(preview.toInt(), canvas);
+
+    outputs.forEach(o => o.dispose());
+    probs.dispose();
+    preview.dispose();
+
+    return { pred, conf };
+  });
+
+  predTensor = tensors.pred;
+  confTensor = tensors.conf;
+
+  const [predData, confData] = await Promise.all([
+    predTensor.data(), confTensor.data()
+  ]);
+
+  predTensor.dispose();
+  confTensor.dispose();
+
+  const idx = predData[0];
+  const confidence = confData[0];
+
+  if (confidence >= config.threshold) {
+    result.textContent = `${config.labels[idx]} (${(confidence * 100).toFixed(1)}%)`;
+  } else {
+    result.textContent = confidence > 0 ? `Uncertain (${(confidence * 100).toFixed(1)}%)` : '---';
+  }
+
+  requestAnimationFrame(predict);
+}
+
+btn.onclick = loadModel;
+select.onchange = () => startCamera(select.value);
+
+getCameras();
+startCamera();
+</script>
+
+
+  
+
+</head>
+<body style="margin:0; padding:20px; background:#111; color:#fff; font-family:monospace;">
+    <div style="margin-bottom:10px;">
+        <select id="camera" style="padding:5px; margin-right:5px;"></select>
+        <button id="load" style="padding:5px 15px; background:#4CAF50; color:#fff; border:none; cursor:pointer;">Load Model</button>
+    </div>
+    
+    <div style="margin-bottom:10px; font-size:12px;">
+        Status: <span id="status">Ready</span>
+    </div>
+    
+    <div style="margin-bottom:10px; font-size:20px;">
+        Result: <span id="result" style="color:#FFA726;">---</span>
+    </div>
+    
+    <div style="position:relative; width:640px; height:480px; border:2px solid #555;">
+        <video id="video" autoplay playsinline style="position:absolute; width:100%; height:100%; object-fit:cover;"></video>
+        <canvas id="canvas" width="28" height="28" style="position:absolute; top:10px; right:10px; width:112px; height:112px; border:2px solid #fff; image-rendering:pixelated;"></canvas>
+    </div>
+</body>
+</html>
