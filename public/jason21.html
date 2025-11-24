@@ -413,7 +413,13 @@
                     myOverlayCanvas.style.scale = `1 ${1 / scale}`;
                 }
                 
-                tf.browser.draw(myRgbTensor.clipByValue(0, 1), myOverlayCanvas, { flipHorizontal: true });
+              //  tf.browser.draw(myRgbTensor.clipByValue(0, 1), myOverlayCanvas, { flipHorizontal: true });
+
+                // 🌟 CRITICAL FIX: Scale to 0-255 and cast to integer type
+                myRgbTensor = myRgbTensor.mul(255.0).cast('int32'); 
+                
+                // 3. 🌟 NECESSARY CLEANUP: Remove the redundant clipping from the draw call
+                tf.browser.draw(myRgbTensor, myOverlayCanvas, { flipHorizontal: true });
                 
                 for (const output of myResults) {
                     output.dispose();
