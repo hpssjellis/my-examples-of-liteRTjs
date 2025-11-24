@@ -1,0 +1,1113 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Unified FOMO & Classification Detector (LiteRT.js Fixed)</title>
+
+    <style>
+        body { 
+            font-family: 'Inter', sans-serif;
+            margin: 20px; 
+            background-color: #f0f4f8;
+            display: flex;
+            justify-content: center;
+            align-items: center;
+            min-height: 100vh;
+        }
+        #myMainContainer {
+            max-width: 800px;
+            width: 100%;
+            background: white;
+            padding: 30px;
+            border-radius: 12px;
+            box-shadow: 0 6px 15px rgba(0, 0, 0, 0.15);
+        }
+        h1 {
+            text-align: center;
+            color: #3c4043;
+            font-size: 2em;
+            margin-bottom: 10px;
+        }
+        #myInstructions {
+            text-align: center;
+            color: #5f6368;
+            margin-bottom: 20px;
+            font-size: 0.95em;
+        }
+        #myVideo { 
+            display: none; 
+        }
+        .myButton {
+            background-color: #1a73e8; 
+            color: white; 
+            padding: 12px 24px; 
+            border: none; 
+            border-radius: 8px; 
+            cursor: pointer; 
+            font-size: 16px; 
+            margin: 5px;
+            transition: background-color 0.3s, transform 0.1s;
+            font-weight: 600;
+        }
+        .myButton:hover { 
+            background-color: #155cb8; 
+        }
+        .myButton:active {
+            transform: translateY(1px);
+        }
+        .myButton:disabled {
+            background-color: #ccc;
+            cursor: not-allowed;
+        }
+        .myButton.stop {
+            background-color: #d93025;
+        }
+        .myButton.stop:hover {
+            background-color: #b02419;
+        }
+        #myControlSection {
+            text-align: center;
+            margin-bottom: 20px;
+        }
+        #myStatusMessage {
+            font-size: 1em;
+            margin: 15px 0;
+            color: #3c4043;
+            font-weight: 500;
+            text-align: center;
+            padding: 12px;
+            background-color: #e6f7ff;
+            border: 1px solid #90caff;
+            border-radius: 8px;
+        }
+        #myCanvasContainer {
+            position: relative;
+            text-align: center;
+            margin-top: 20px;
+        }
+        #myCanvas { 
+            border: 3px solid #1a73e8;
+            border-radius: 8px; 
+            background-color: #333; 
+            width: 100%; 
+            height: auto;
+            max-width: 600px; 
+            aspect-ratio: 1 / 1;
+            display: block;
+            margin: 0 auto;
+            transition: border-color 0.3s;
+        }
+        #myCanvas.drag-over {
+            border-color: #0f9d58;
+            border-style: dashed;
+            border-width: 4px;
+            background-color: #e8f5e9;
+        }
+        #myDropOverlay {
+            position: absolute;
+            top: 0;
+            left: 50%;
+            transform: translateX(-50%);
+            width: 100%;
+            max-width: 600px;
+            height: 100%;
+            background-color: rgba(15, 157, 88, 0.1);
+            border: 4px dashed #0f9d58;
+            border-radius: 8px;
+            display: none;
+            justify-content: center;
+            align-items: center;
+            pointer-events: none;
+        }
+        #myDropOverlay.active {
+            display: flex;
+        }
+        #myDropText {
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #0f9d58;
+            background-color: white;
+            padding: 20px 40px;
+            border-radius: 8px;
+            box-shadow: 0 4px 8px rgba(0, 0, 0, 0.2);
+        }
+        .myModelInfo {
+            text-align: center;
+            margin-top: 15px;
+            padding: 12px;
+            background-color: #f8f9fa;
+            border-radius: 8px;
+            border: 1px solid #dee2e6;
+        }
+        .myInfoLabel {
+            font-size: 0.85em;
+            color: #6c757d;
+            font-weight: 600;
+            display: block;
+            margin-bottom: 5px;
+        }
+        .myInfoValue {
+            font-size: 0.95em;
+            color: #212529;
+            font-family: monospace;
+        }
+        .myInputGroup {
+            display: flex;
+            gap: 5px;
+            margin-bottom: 10px;
+        }
+        .myInputGroup input[type="text"] {
+            flex-grow: 1;
+            padding: 10px;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            font-size: 16px;
+        }
+        #myLabelEditor {
+            width: 100%;
+            height: 80px;
+            padding: 10px;
+            box-sizing: border-box;
+            border: 1px solid #ccc;
+            border-radius: 8px;
+            font-family: monospace;
+            font-size: 14px;
+            margin-bottom: 15px;
+        }
+        #myResultDisplay {
+            margin-top: 20px;
+            padding: 15px;
+            border-radius: 8px;
+            background-color: #e6ffe6;
+            border: 2px solid #0f9d58;
+            text-align: center;
+            font-size: 1.5em;
+            font-weight: bold;
+            color: #0f9d58;
+            display: none;
+        }
+        #myResultDisplay.active {
+            display: block;
+        }
+        #myResultLabel {
+            font-size: 1.8em;
+            color: #0c8046;
+            margin-top: 5px;
+            display: block;
+        }
+        #myResultConfidence {
+            font-size: 1em;
+            color: #3c4043;
+            display: block;
+            margin-top: 5px;
+        }
+    </style>
+    
+</head>
+<body>
+
+    <script type="module">
+        // =================================================================
+        // 📦 LITE RT.JS MODULE IMPORTS
+        // =================================================================
+        import * as LiteRT from 'https://cdn.jsdelivr.net/npm/@litertjs/core@0.2.1/+esm';
+        import * as LiteRTInterop from 'https://cdn.jsdelivr.net/npm/@litertjs/tfjs-interop/+esm'; 
+        import 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs/dist/tf.min.js';
+        import 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgpu/dist/tf-backend-webgpu.js';
+
+        // =================================================================
+        // 🚀 DEFAULT CONFIGURATION (FOMO Model)
+        // =================================================================
+        const myDefaultConfig = {
+            myDefaultUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/MINST.tflite',
+            myInputResolution: 320,
+            myGridScaleFactor: 8,
+            myConfidenceThreshold: 0.5,
+            myClassLabels: ['background', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9'],
+            myInputChannels: 3,
+            myModelType: 'fomo',
+            myGithubRepoPath: 'hpssjellis/my-examples-of-liteRTjs/main/public/tflite'
+        };
+
+        // =================================================================
+        // ⚙️ GLOBAL VARIABLES 
+        // =================================================================
+        let myVideoElement = null;
+        let myIsWebcamReady = false;
+        let myIsPredicting = false;
+        let myAnimationFrameId = null;
+        let myStatusElement = null;
+        let myStartButton = null;
+        let myStopButton = null;
+        let myCanvas = null;
+        let myContext = null;
+        let myDropOverlay = null;
+        let myModelInfo = null;
+        let myUrlInput = null;
+        let myFileInput = null;
+        let myLabelEditor = null;
+        let myResultDisplay = null;
+        let myModelSelect = null;
+        let myIsLiteRtInitialized = false;
+        
+        let myModel = null;
+        let myCurrentConfig = {...myDefaultConfig};
+        let myCurrentModelName = 'Default Model';
+        let myCurrentModelSize = 0;
+
+        // =================================================================
+        // 🏠 HTML SETUP
+        // =================================================================
+        
+        function myCreateDOM() {
+            const myMainContainer = document.createElement('div');
+            myMainContainer.id = 'myMainContainer';
+            
+            const myTitle = document.createElement('h1');
+            myTitle.textContent = 'Edge Impulse Model Detector';
+            myMainContainer.appendChild(myTitle);
+
+            const myInstructions = document.createElement('div');
+            myInstructions.id = 'myInstructions';
+            myInstructions.innerHTML = 'Load FOMO or Classification models via URL, File, or Drag & Drop<br><small>Auto-detects model type and properties. Edit labels below.</small>';
+            myMainContainer.appendChild(myInstructions);
+
+            // Model Select Dropdown
+            myModelSelect = document.createElement('select');
+            myModelSelect.style.cssText = 'width: 100%; padding: 10px; border: 1px solid #ccc; border-radius: 8px; font-size: 16px; background-color: white; margin-bottom: 15px;';
+            myModelSelect.innerHTML = '<option value="">Loading models from GitHub...</option>';
+            myModelSelect.onchange = myHandleModelSelect;
+            myMainContainer.appendChild(myModelSelect);
+
+            // URL Upload
+            const myUrlGroup = document.createElement('div');
+            myUrlGroup.className = 'myInputGroup';
+            myUrlInput = document.createElement('input');
+            myUrlInput.type = 'text';
+            myUrlInput.placeholder = 'Paste Model URL (.tflite or .lite)';
+            myUrlInput.value = myDefaultConfig.myDefaultUrl;
+            myUrlGroup.appendChild(myUrlInput);
+            const myUrlButton = document.createElement('button');
+            myUrlButton.className = 'myButton';
+            myUrlButton.textContent = 'Load from URL';
+            myUrlButton.onclick = () => myLoadModelFromUrl(myUrlInput.value);
+            myUrlGroup.appendChild(myUrlButton);
+            myMainContainer.appendChild(myUrlGroup);
+
+            // File Input
+            myFileInput = document.createElement('input');
+            myFileInput.type = 'file';
+            myFileInput.style.marginBottom = '15px';
+            myFileInput.setAttribute('accept', '.tflite,.lite');
+            myFileInput.onchange = myHandleFileInput;
+            myMainContainer.appendChild(myFileInput);
+
+            // Model info display
+            myModelInfo = document.createElement('div');
+            myModelInfo.className = 'myModelInfo';
+            myModelInfo.innerHTML = `
+                <span class="myInfoLabel">Model:</span>
+                <span class="myInfoValue" id="myModelName">No model loaded</span><br>
+                <span class="myInfoLabel">Type:</span>
+                <span class="myInfoValue" id="myModelType">Unknown</span><br>
+                <span class="myInfoLabel">Size:</span>
+                <span class="myInfoValue" id="myModelSize">N/A</span><br>
+                <span class="myInfoLabel">Config:</span>
+                <span class="myInfoValue" id="myModelConfig">N/A</span>
+            `;
+            myMainContainer.appendChild(myModelInfo);
+
+            // Labels Textarea
+            const myLabelHeader = document.createElement('div');
+            myLabelHeader.style.cssText = 'font-size: 0.9em; margin-top: 15px; margin-bottom: 5px; font-weight: bold; color: #3c4043;';
+            myLabelHeader.textContent = 'Class Labels (Comma-separated)';
+            myMainContainer.appendChild(myLabelHeader);
+            
+            myLabelEditor = document.createElement('textarea');
+            myLabelEditor.id = 'myLabelEditor';
+            myLabelEditor.placeholder = 'Enter labels here (e.g., background, Object1, Object2)';
+            myLabelEditor.oninput = myUpdateConfigFromLabels;
+            myMainContainer.appendChild(myLabelEditor);
+
+            // Control section
+            const myControlSection = document.createElement('div');
+            myControlSection.id = 'myControlSection';
+            
+            myStatusElement = document.createElement('div');
+            myStatusElement.id = 'myStatusMessage';
+            myStatusElement.textContent = 'Click "Start" to begin';
+            myControlSection.appendChild(myStatusElement);
+
+            myStartButton = document.createElement('button');
+            myStartButton.className = 'myButton';
+            myStartButton.textContent = 'Start Webcam & Load Default Model';
+            myStartButton.onclick = myStartAll;
+            myControlSection.appendChild(myStartButton);
+
+            myStopButton = document.createElement('button');
+            myStopButton.className = 'myButton stop';
+            myStopButton.textContent = 'Stop All';
+            myStopButton.onclick = myStopAll;
+            myStopButton.disabled = true;
+            myControlSection.appendChild(myStopButton);
+
+            myMainContainer.appendChild(myControlSection);
+
+            // Hidden video element
+            myVideoElement = document.createElement('video');
+            myVideoElement.id = 'myVideo';
+            myVideoElement.setAttribute('playsinline', '');
+            myVideoElement.setAttribute('autoplay', '');
+            myMainContainer.appendChild(myVideoElement);
+
+            // Canvas container with drop overlay
+            const myCanvasContainer = document.createElement('div');
+            myCanvasContainer.id = 'myCanvasContainer';
+
+            myCanvas = document.createElement('canvas');
+            myCanvas.id = 'myCanvas';
+            myCanvas.width = myCurrentConfig.myInputResolution;
+            myCanvas.height = myCurrentConfig.myInputResolution;
+            myContext = myCanvas.getContext('2d');
+            myCanvasContainer.appendChild(myCanvas);
+
+            myDropOverlay = document.createElement('div');
+            myDropOverlay.id = 'myDropOverlay';
+            const myDropText = document.createElement('div');
+            myDropText.id = 'myDropText';
+            myDropText.textContent = 'Drop .tflite or .lite file here';
+            myDropOverlay.appendChild(myDropText);
+            myCanvasContainer.appendChild(myDropOverlay);
+
+            myMainContainer.appendChild(myCanvasContainer);
+
+            // Classification Result Display
+            myResultDisplay = document.createElement('div');
+            myResultDisplay.id = 'myResultDisplay';
+            myResultDisplay.innerHTML = 'Classification Result:<span id="myResultLabel">Awaiting Input...</span><span id="myResultConfidence"></span>';
+            myMainContainer.appendChild(myResultDisplay);
+
+            document.body.appendChild(myMainContainer);
+
+            mySetupDragAndDrop();
+            myUpdateLabelEditor();
+            myLoadGithubModels();
+        }
+
+        window.onload = myCreateDOM;
+
+        // =================================================================
+        // 📦 GITHUB MODEL LOADER
+        // =================================================================
+
+        async function myLoadGithubModels() {
+            try {
+                const myPathParts = myDefaultConfig.myGithubRepoPath.split('/');
+                const myUser = myPathParts[0];
+                const myRepo = myPathParts[1];
+                const myBranch = myPathParts[2];
+                const myFolderPath = myPathParts.slice(3).join('/');
+                
+                const myApiUrl = `https://api.github.com/repos/${myUser}/${myRepo}/contents/${myFolderPath}?ref=${myBranch}`;
+                
+                console.log('Fetching models from:', myApiUrl);
+                
+                const myResponse = await fetch(myApiUrl);
+                if (!myResponse.ok) {
+                    throw new Error(`GitHub API error: ${myResponse.status}`);
+                }
+                
+                const myFiles = await myResponse.json();
+                
+                const myModelFiles = myFiles.filter(myFile => 
+                    myFile.name.endsWith('.tflite') || myFile.name.endsWith('.lite')
+                );
+                
+                if (myModelFiles.length === 0) {
+                    myModelSelect.innerHTML = '<option value="">No models found in repository</option>';
+                    return;
+                }
+                
+                myModelSelect.innerHTML = '<option value="">-- Select a Model --</option>';
+                
+                myModelFiles.forEach(myFile => {
+                    const myOption = document.createElement('option');
+                    const myGithubPagesUrl = `https://${myUser}.github.io/${myRepo}/${myFolderPath}/${myFile.name}`;
+                    myOption.value = myGithubPagesUrl;
+                    myOption.textContent = myFile.name;
+                    myModelSelect.appendChild(myOption);
+                });
+                
+                console.log(`Loaded ${myModelFiles.length} models from GitHub`);
+                
+            } catch (myError) {
+                console.error('Failed to load GitHub models:', myError);
+                myModelSelect.innerHTML = '<option value="">Failed to load models (check console)</option>';
+            }
+        }
+
+        function myHandleModelSelect() {
+            if (myModelSelect.value) {
+                myUrlInput.value = myModelSelect.value;
+                myLoadModelFromUrl(myModelSelect.value);
+            }
+        }
+
+        // =================================================================
+        // 🎯 DRAG AND DROP / FILE INPUT HANDLERS
+        // =================================================================
+
+        function mySetupDragAndDrop() {
+            ['dragenter', 'dragover', 'dragleave', 'drop'].forEach(myEventName => {
+                document.body.addEventListener(myEventName, myPreventDefaults, false);
+            });
+
+            function myPreventDefaults(myEvent) {
+                myEvent.preventDefault();
+                myEvent.stopPropagation();
+            }
+
+            ['dragenter', 'dragover'].forEach(myEventName => {
+                myCanvas.addEventListener(myEventName, () => {
+                    myCanvas.classList.add('drag-over');
+                    myDropOverlay.classList.add('active');
+                }, false);
+            });
+
+            ['dragleave', 'drop'].forEach(myEventName => {
+                myCanvas.addEventListener(myEventName, () => {
+                    myCanvas.classList.remove('drag-over');
+                    myDropOverlay.classList.remove('active');
+                }, false);
+            });
+
+            myCanvas.addEventListener('drop', myHandleDrop, false);
+        }
+
+        function myHandleDrop(myEvent) {
+            const myDataTransfer = myEvent.dataTransfer;
+            const myDroppedFiles = myDataTransfer.files;
+
+            if (myDroppedFiles.length > 0) {
+                const myFile = myDroppedFiles[0];
+                if (myFile.name.endsWith('.tflite') || myFile.name.endsWith('.lite')) {
+                    myLoadModelFromFile(myFile);
+                } else {
+                    myStatusElement.textContent = 'Error: Please drop a .tflite or .lite file';
+                }
+            }
+        }
+        
+        function myHandleFileInput(myEvent) {
+            const myFile = myEvent.target.files[0];
+            if (myFile) {
+                myLoadModelFromFile(myFile);
+            }
+        }
+
+        // =================================================================
+        // 🛠️ MODEL LOADING FUNCTIONS (LITERT.JS IMPLEMENTATION - FIXED)
+        // =================================================================
+
+        async function myLoadModelFromFile(myFile) {
+            myStatusElement.textContent = `Loading model from file: ${myFile.name}...`;
+            try {
+                const myBuffer = await myFile.arrayBuffer();
+                await myLoadModel(myBuffer, myFile.name);
+            } catch (myError) {
+                console.error('File loading error:', myError);
+                myStatusElement.textContent = `Error loading file: ${myError.message}`;
+            }
+        }
+
+        async function myLoadModelFromUrl(myUrl) {
+            if (!myUrl || myUrl.trim() === '') {
+                myStatusElement.textContent = 'Error: Please provide a valid URL';
+                return;
+            }
+            
+            myStatusElement.textContent = `Loading model from URL: ${myUrl}...`;
+            try {
+                const myModelName = myUrl.substring(myUrl.lastIndexOf('/') + 1);
+                await myLoadModel(myUrl, myModelName);
+            } catch (myError) {
+                console.error('URL loading error:', myError);
+                myStatusElement.textContent = `Error loading URL: ${myError.message}`;
+            }
+        }
+
+        async function myLoadModel(mySource, myModelName) {
+            try {
+                // CRITICAL FIX 1: Stop inference loop FIRST before any cleanup
+                if (myIsPredicting) {
+                    myStopInferenceLoop();
+                    // Wait a frame to ensure loop has actually stopped
+                    await new Promise(resolve => setTimeout(resolve, 100));
+                }
+
+                // CRITICAL FIX 2: Properly dispose and destroy old model
+                if (myModel) {
+                    try {
+                        // Dispose any lingering tensors first
+                        tf.engine().startScope();
+                        tf.engine().endScope();
+                        
+                        // Now destroy the model
+                        myModel.destroy();
+                        myModel = null;
+                        console.log("Previous model destroyed");
+                        
+                        // Give WebGPU time to cleanup
+                        await new Promise(resolve => setTimeout(resolve, 50));
+                    } catch (cleanupError) {
+                        console.warn('Model cleanup warning:', cleanupError);
+                    }
+                }
+
+                // CRITICAL FIX 3: Initialize backend and LiteRT in correct order
+                myStatusElement.textContent = 'Initializing WebGPU backend...';
+                
+                // First, set backend
+                await tf.ready();
+                await tf.setBackend('webgpu');
+                await tf.ready();
+                
+                // Then load LiteRT WASM (only once)
+                if (!myIsLiteRtInitialized) {
+                    myStatusElement.textContent = 'Loading LiteRT core (first time)...';
+                    await LiteRT.loadLiteRt('https://cdn.jsdelivr.net/npm/@litertjs/core@0.2.1/wasm/');
+                    myIsLiteRtInitialized = true;
+                    console.log('LiteRT initialized');
+                }
+                
+                // Set WebGPU device on LiteRT
+                const myTfBackend = tf.backend();
+                if (myTfBackend && myTfBackend.device) {
+                    LiteRT.setWebGpuDevice(myTfBackend.device);
+                } else {
+                    throw new Error('WebGPU backend not properly initialized');
+                }
+
+                // CRITICAL FIX 4: Load and compile the model with error handling
+                myStatusElement.textContent = `Loading & compiling: ${myModelName}...`;
+                
+                myModel = await LiteRT.loadAndCompile(mySource, {
+                    accelerator: 'webgpu',
+                });
+                
+                if (!myModel || !myModel.inputs || !myModel.outputs) {
+                    throw new Error("Model compilation failed or returned invalid object");
+                }
+
+                myCurrentModelName = myModelName;
+                
+                // Calculate model size
+                if (mySource instanceof ArrayBuffer) {
+                    myCurrentModelSize = mySource.byteLength;
+                } else if (typeof mySource === 'string') {
+                    // For URLs, we can't know size without fetching, so estimate
+                    myCurrentModelSize = 0;
+                } else {
+                    myCurrentModelSize = 0;
+                }
+
+                // CRITICAL FIX 5: Auto-detect configuration with better error handling
+                myCurrentConfig = myAutoDetectConfig(myModel);
+                
+                if (myCurrentConfig.myModelType === 'unknown') {
+                    console.warn('Could not auto-detect model type. Using defaults.');
+                    myStatusElement.textContent = `Model loaded but type unknown: ${myModelName}`;
+                } else {
+                    console.log(`Model loaded successfully: ${myModelName} (${myCurrentConfig.myModelType})`);
+                    myStatusElement.textContent = `Model ready: ${myModelName} (${myCurrentConfig.myModelType.toUpperCase()})`;
+                }
+
+                myUpdateModelInfoDisplay();
+                
+                // If webcam is ready, start inference
+                if (myIsWebcamReady) {
+                    myStatusElement.textContent += ' - Starting inference...';
+                    // Small delay before starting inference
+                    setTimeout(() => {
+                        myRunInferenceLoop();
+                    }, 100);
+                }
+
+            } catch (myError) {
+                console.error('Model loading error:', myError);
+                myStatusElement.textContent = `Failed to load model: ${myError.message}`;
+                
+                // Cleanup on error
+                if (myModel) {
+                    try {
+                        myModel.destroy();
+                    } catch (e) {
+                        console.warn('Cleanup error:', e);
+                    }
+                    myModel = null;
+                }
+            }
+        }
+
+        function myStopInferenceLoop() {
+            if (myAnimationFrameId) {
+                cancelAnimationFrame(myAnimationFrameId);
+                myAnimationFrameId = null;
+            }
+            myIsPredicting = false;
+            console.log('Inference loop stopped');
+        }
+
+        // =================================================================
+        // 🔍 MODEL INTROSPECTION (CRITICAL FIXES)
+        // =================================================================
+
+        function myAutoDetectConfig(myModel) {
+            try {
+                const myInputs = myModel.inputs;
+                const myOutputs = myModel.outputs;
+
+                // CRITICAL FIX 6: Comprehensive validation
+                if (!myInputs || !myOutputs || !Array.isArray(myInputs) || !Array.isArray(myOutputs)) {
+                    console.error('Model introspection failed: invalid inputs/outputs structure');
+                    return {...myDefaultConfig, myModelType: 'unknown'};
+                }
+
+                if (myInputs.length !== 1 || myOutputs.length !== 1) {
+                    console.warn(`Unexpected tensor count: ${myInputs.length} inputs, ${myOutputs.length} outputs`);
+                    if (myInputs.length === 0 || myOutputs.length === 0) {
+                        return {...myDefaultConfig, myModelType: 'unknown'};
+                    }
+                }
+
+                const myInput = myInputs[0];
+                const myOutput = myOutputs[0];
+                
+                if (!myInput || !myInput.shape || !myOutput || !myOutput.shape) {
+                    console.error('Model tensors missing shape information');
+                    return {...myDefaultConfig, myModelType: 'unknown'};
+                }
+                
+                const myInputShape = myInput.shape;
+                const myOutputShape = myOutput.shape;
+
+                console.log('Input shape:', myInputShape);
+                console.log('Output shape:', myOutputShape);
+
+                // CRITICAL FIX 7: Better shape parsing with validation
+                let myInputResolution = myDefaultConfig.myInputResolution;
+                let myInputChannels = myDefaultConfig.myInputChannels;
+                
+                // Handle different input shape formats: [1,H,W,C] or [1,C,H,W]
+                if (myInputShape.length === 4) {
+                    // Assume [1, H, W, C] format (TensorFlow/TFLite standard)
+                    if (myInputShape[1] === myInputShape[2]) {
+                        myInputResolution = myInputShape[1];
+                        myInputChannels = myInputShape[3];
+                    } else if (myInputShape[2] === myInputShape[3]) {
+                        // PyTorch format [1, C, H, W]
+                        myInputChannels = myInputShape[1];
+                        myInputResolution = myInputShape[2];
+                    }
+                } else {
+                    console.warn('Unexpected input shape length:', myInputShape.length);
+                }
+
+                let myModelType = 'unknown';
+                let myGridScaleFactor = 0;
+                let myNumClasses = 0;
+
+                // CRITICAL FIX 8: More robust output detection
+                if (myOutputShape.length === 4) {
+                    // FOMO or Object Detection: [1, grid_h, grid_w, num_classes]
+                    myModelType = 'fomo';
+                    const myGridSize = myOutputShape[1];
+                    myGridScaleFactor = myInputResolution / myGridSize;
+                    myNumClasses = myOutputShape[3];
+                    console.log(`Auto-Detected FOMO: Input=${myInputResolution}x${myInputResolution}, Grid=${myGridSize}x${myOutputShape[2]}, Scale=${myGridScaleFactor}, Classes=${myNumClasses}`);
+
+                } else if (myOutputShape.length === 2) {
+                    // Classification: [1, num_classes]
+                    myModelType = 'classification';
+                    myNumClasses = myOutputShape[1];
+                    console.log(`Auto-Detected Classification: Input=${myInputResolution}x${myInputResolution}, Classes=${myNumClasses}`);
+
+                } else if (myOutputShape.length === 3) {
+                    // Possible 1D FOMO variant: [1, grid_size, num_classes]
+                    console.warn('Detected 3D output - treating as FOMO variant');
+                    myModelType = 'fomo';
+                    myGridScaleFactor = myInputResolution / myOutputShape[1];
+                    myNumClasses = myOutputShape[2];
+                } else {
+                    console.warn('Unknown output shape format:', myOutputShape);
+                }
+
+                // CRITICAL FIX 9: Smart label generation
+                let myClassLabels = [...myDefaultConfig.myClassLabels];
+                
+                if (myNumClasses > 0) {
+                    if (myNumClasses > myClassLabels.length) {
+                        console.log(`Generating ${myNumClasses} placeholder labels`);
+                        myClassLabels = Array.from({ length: myNumClasses }, (_, i) => 
+                            i === 0 ? 'background' : `Class${i}`
+                        );
+                    } else if (myNumClasses < myClassLabels.length) {
+                        myClassLabels = myClassLabels.slice(0, myNumClasses);
+                    }
+                }
+                
+                myLabelEditor.value = myClassLabels.join(', ');
+
+                return {
+                    myDefaultUrl: myDefaultConfig.myDefaultUrl,
+                    myInputResolution,
+                    myGridScaleFactor,
+                    myConfidenceThreshold: myDefaultConfig.myConfidenceThreshold,
+                    myClassLabels,
+                    myInputChannels,
+                    myModelType,
+                    myGithubRepoPath: myDefaultConfig.myGithubRepoPath
+                };
+                
+            } catch (error) {
+                console.error('Config detection error:', errorRetryJEContinue);
+return {...myDefaultConfig, myModelType: 'unknown'};
+}
+}
+    // =================================================================
+    // 🎨 UI & DATA UPDATE FUNCTIONS
+    // =================================================================
+
+    function myUpdateConfigFromLabels() {
+        const myLabelText = myLabelEditor.value.trim();
+        if (myLabelText) {
+            myCurrentConfig.myClassLabels = myLabelText.split(',').map(l => l.trim()).filter(l => l.length > 0);
+            myUpdateModelInfoDisplay();
+        }
+    }
+
+    function myUpdateLabelEditor() {
+        myLabelEditor.value = myCurrentConfig.myClassLabels.join(', ');
+    }
+
+    function myUpdateModelInfoDisplay() {
+        document.getElementById('myModelName').textContent = myCurrentModelName;
+        document.getElementById('myModelType').textContent = myCurrentConfig.myModelType.toUpperCase();
+        document.getElementById('myModelSize').textContent = myCurrentModelSize > 0 ? (myCurrentModelSize / (1024 * 1024)).toFixed(2) + ' MB' : 'Unknown';
+        document.getElementById('myModelConfig').textContent = 
+            `Input: ${myCurrentConfig.myInputResolution}x${myCurrentConfig.myInputResolution}x${myCurrentConfig.myInputChannels}, ` +
+            `Classes: ${myCurrentConfig.myClassLabels.length}` + 
+            (myCurrentConfig.myModelType === 'fomo' ? `, Grid Scale: ${myCurrentConfig.myGridScaleFactor}` : '');
+        myUpdateLabelEditor();
+        
+        // Update canvas size to match model input
+        myCanvas.width = myCurrentConfig.myInputResolution;
+        myCanvas.height = myCurrentConfig.myInputResolution;
+        
+        // Toggle result display visibility
+        if (myCurrentConfig.myModelType === 'classification') {
+            myResultDisplay.classList.add('active');
+        } else {
+            myResultDisplay.classList.remove('active');
+        }
+    }
+    
+    // =================================================================
+    // ⏯️ WEBCAM AND INFERENCE LOOP
+    // =================================================================
+
+    function myStartAll() {
+        if (myIsWebcamReady) {
+            myStatusElement.textContent = 'Webcam already running. Loading default model...';
+            myLoadModelFromUrl(myCurrentConfig.myDefaultUrl);
+            return;
+        }
+
+        myStartWebcam().then(() => {
+            myIsWebcamReady = true;
+            myStartButton.disabled = true;
+            myStopButton.disabled = false;
+            myStatusElement.textContent = 'Webcam started. Loading default model...';
+            
+            // Load default model after webcam starts
+            myLoadModelFromUrl(myCurrentConfig.myDefaultUrl);
+            
+        }).catch(myError => {
+            myStatusElement.textContent = `Webcam Error: ${myError.message}`;
+            console.error('Webcam access error:', myError);
+        });
+    }
+
+    async function myStartWebcam() {
+        if (navigator.mediaDevices && navigator.mediaDevices.getUserMedia) {
+            const myStream = await navigator.mediaDevices.getUserMedia({ 
+                video: { 
+                    facingMode: 'environment',
+                    width: { ideal: 640 },
+                    height: { ideal: 640 }
+                } 
+            });
+            myVideoElement.srcObject = myStream;
+            return new Promise(myResolve => {
+                myVideoElement.onloadedmetadata = () => {
+                    myVideoElement.play();
+                    myResolve();
+                };
+            });
+        } else {
+            throw new Error('Webcam not supported or permission denied');
+        }
+    }
+    
+    function myStopWebcam() {
+        if (myVideoElement && myVideoElement.srcObject) {
+            myVideoElement.srcObject.getTracks().forEach(track => track.stop());
+            myVideoElement.srcObject = null;
+        }
+    }
+
+    function myStopAll() {
+        myStopInferenceLoop();
+        myStopWebcam();
+        
+        // Cleanup model
+        if (myModel) {
+            try {
+                myModel.destroy();
+                myModel = null;
+                console.log("Model destroyed on stop");
+            } catch (e) {
+                console.warn('Stop cleanup error:', e);
+            }
+        }
+        
+        myIsWebcamReady = false;
+        myStartButton.disabled = false;
+        myStopButton.disabled = true;
+        myStatusElement.textContent = 'Stopped. Click "Start" to begin.';
+    }
+
+    // =================================================================
+    // 🔄 INFERENCE LOOP (CRITICAL FIXES)
+    // =================================================================
+
+    function myRunInferenceLoop() {
+        if (!myIsWebcamReady || !myModel || !myModel.inputs) {
+            console.log('Inference prerequisites not met');
+            myIsPredicting = false;
+            return;
+        }
+        
+        if (myIsPredicting) {
+            console.log('Inference already running, skipping duplicate call');
+            return;
+        }
+        
+        myIsPredicting = true;
+        console.log('Starting inference loop');
+        myInferenceStep();
+    }
+
+    function myInferenceStep() {
+        if (!myIsPredicting || !myIsWebcamReady || !myModel) {
+            myIsPredicting = false;
+            return;
+        }
+
+        try {
+            // CRITICAL FIX 10: Proper tensor scope management
+            tf.engine().startScope();
+
+            // Draw video frame to canvas
+            myContext.drawImage(myVideoElement, 0, 0, myCanvas.width, myCanvas.height);
+
+            // Preprocess
+            const myInputTensor = myPreProcess(myCanvas);
+            
+            // Run inference
+            const myResults = LiteRTInterop.runWithTfjsTensors(myModel, myInputTensor);
+            
+            if (!myResults || myResults.length === 0) {
+                throw new Error('No output from model');
+            }
+            
+            const myOutputTensor = myResults[0];
+
+            // Post-process based on model type
+            if (myCurrentConfig.myModelType === 'fomo') {
+                myPostProcessFOMO(myOutputTensor);
+            } else if (myCurrentConfig.myModelType === 'classification') {
+                myPostProcessClassification(myOutputTensor);
+            }
+
+            // Cleanup tensors
+            myInputTensor.dispose();
+            for (const output of myResults) {
+                output.dispose();
+            }
+
+            tf.engine().endScope();
+            
+            // CRITICAL FIX 11: Proper WebGPU synchronization
+            const backend = tf.backend();
+            if (backend && backend.queue && backend.queue.onSubmittedWorkDone) {
+                backend.queue.onSubmittedWorkDone().then(() => {
+                    if (myIsPredicting) {
+                        myAnimationFrameId = requestAnimationFrame(myInferenceStep);
+                    }
+                }).catch(err => {
+                    console.error('WebGPU sync error:', err);
+                    if (myIsPredicting) {
+                        myAnimationFrameId = requestAnimationFrame(myInferenceStep);
+                    }
+                });
+            } else {
+                // Fallback if queue not available
+                if (myIsPredicting) {
+                    myAnimationFrameId = requestAnimationFrame(myInferenceStep);
+                }
+            }
+            
+        } catch (error) {
+            console.error('Inference error:', error);
+            tf.engine().endScope();
+            myStatusElement.textContent = `Inference error: ${error.message}`;
+            myIsPredicting = false;
+        }
+    }
+
+    function myPreProcess(mySource) {
+        // CRITICAL FIX 12: Ensure correct input format
+        const myTensor = tf.browser.fromPixels(mySource, myCurrentConfig.myInputChannels)
+            .expandDims(0)
+            .cast('float32')
+            .div(127.5)
+            .sub(1.0); // Normalize to [-1, 1]
+        return myTensor;
+    }
+
+    // =================================================================
+    // 📊 POST-PROCESSING FUNCTIONS (CRITICAL FIXES)
+    // =================================================================
+
+    function myPostProcessFOMO(myOutputTensor) {
+        const myScale = myCurrentConfig.myGridScaleFactor;
+        const myClasses = myCurrentConfig.myClassLabels;
+        const myThreshold = myCurrentConfig.myConfidenceThreshold;
+        const myCanvasSize = myCanvas.width;
+        const myGridH = myOutputTensor.shape[1];
+        const myGridW = myOutputTensor.shape[2];
+        const myNumClasses = myOutputTensor.shape[3];
+
+        // CRITICAL FIX 13: Use dataSync for better performance
+        const myOutputArray = myOutputTensor.dataSync();
+        
+        // Clear and darken canvas
+        myContext.fillStyle = 'rgba(0, 0, 0, 0.3)';
+        myContext.fillRect(0, 0, myCanvasSize, myCanvasSize);
+        
+        // CRITICAL FIX 14: Correct grid iteration and indexing
+        for (let r = 0; r < myGridH; r++) {
+            for (let c = 0; c < myGridW; c++) {
+                let myMaxConfidence = 0;
+                let myMaxClassIndex = 0;
+                
+                // Start from index 1 to skip background
+                for (let k = 1; k < Math.min(myNumClasses, myClasses.length); k++) {
+                    // Correct 4D tensor indexing: [batch=0, height=r, width=c, channel=k]
+                    const myIndex = (r * myGridW * myNumClasses) + (c * myNumClasses) + k;
+                    const myConfidence = myOutputArray[myIndex];
+
+                    if (myConfidence > myMaxConfidence) {
+                        myMaxConfidence = myConfidence;
+                        myMaxClassIndex = k;
+                    }
+                }
+
+                if (myMaxConfidence >= myThreshold && myMaxClassIndex > 0) {
+                    const myClassLabel = myClasses[myMaxClassIndex] || `Class${myMaxClassIndex}`;
+                    const myX = c * myScale + (myScale / 2);
+                    const myY = r * myScale + (myScale / 2);
+
+                    // Draw detection circle
+                    myContext.beginPath();
+                    myContext.arc(myX, myY, myScale * 0.4, 0, 2 * Math.PI);
+                    myContext.fillStyle = 'rgba(26, 115, 232, 0.7)';
+                    myContext.fill();
+                    myContext.strokeStyle = 'rgba(255, 255, 255, 0.9)';
+                    myContext.lineWidth = 2;
+                    myContext.stroke();
+                    
+                    // Draw label
+                    myContext.fillStyle = 'white';
+                    myContext.font = `bold ${Math.max(12, myScale * 0.35)}px Arial`;
+                    myContext.textAlign = 'center';
+                    myContext.strokeStyle = 'black';
+                    myContext.lineWidth = 3;
+                    myContext.strokeText(myClassLabel, myX, myY + 4);
+                    myContext.fillText(myClassLabel, myX, myY + 4);
+                    
+                    // Draw confidence
+                    myContext.font = `${Math.max(10, myScale * 0.25)}px Arial`;
+                    const confText = `${(myMaxConfidence * 100).toFixed(0)}%`;
+                    myContext.strokeText(confText, myX, myY - myScale * 0.3);
+                    myContext.fillText(confText, myX, myY - myScale * 0.3);
+                }
+            }
+        }
+    }
+
+    function myPostProcessClassification(myOutputTensor) {
+        const myClasses = myCurrentConfig.myClassLabels;
+        
+        // CRITICAL FIX 15: Proper classification result extraction
+        const myOutputArray = myOutputTensor.dataSync();
+
+        let myMaxIndex = 0;
+        let myMaxValue = myOutputArray[0];
+        
+        for (let i = 1; i < myOutputArray.length; i++) {
+            if (myOutputArray[i] > myMaxValue) {
+                myMaxValue = myOutputArray[i];
+                myMaxIndex = i;
+            }
+        }
+        
+        const myConfidence = myMaxValue;
+        const myClassLabel = myClasses[myMaxIndex] || `Class${myMaxIndex}`;
+
+        // Update result display
+        document.getElementById('myResultLabel').textContent = myClassLabel;
+        document.getElementById('myResultConfidence').textContent = 
+            `Confidence: ${(myConfidence * 100).toFixed(1)}%`;
+        
+        // Redraw canvas with color overlay
+        myContext.globalAlpha = 1;
+        myContext.drawImage(myVideoElement, 0, 0, myCanvas.width, myCanvas.height);
+        
+        // Color overlay based on confidence
+        const isConfident = myConfidence >= myCurrentConfig.myConfidenceThreshold;
+        myContext.globalAlpha = 0.3;
+        myContext.fillStyle = isConfident ? '#0f9d58' : '#f4b400';
+        myContext.fillRect(0, 0, myCanvas.width, myCanvas.height);
+        myContext.globalAlpha = 1;
+        
+        // Draw label on canvas
+        myContext.fillStyle = 'white';
+        myContext.font = 'bold 32px Arial';
+        myContext.textAlign = 'center';
+        myContext.strokeStyle = 'black';
+        myContext.lineWidth = 4;
+        myContext.strokeText(myClassLabel, myCanvas.width / 2, myCanvas.height / 2);
+        myContext.fillText(myClassLabel, myCanvas.width / 2, myCanvas.height / 2);
+        
+        myContext.font = '20px Arial';
+        const confText = `${(myConfidence * 100).toFixed(1)}%`;
+        myContext.strokeText(confText, myCanvas.width / 2, myCanvas.height / 2 + 35);
+        myContext.fillText(confText, myCanvas.width / 2, myCanvas.height / 2 + 35);
+    }
+
+</script>
+</body>
+</html>
