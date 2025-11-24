@@ -129,7 +129,7 @@
             }
         }
 
-        /** Loads the LiteRT environment and the Model. */
+     /** Loads the LiteRT environment and the Model. */
         async function myLoadModel() {
             if (myModel !== undefined || myIsPredicting) return;
             
@@ -145,15 +145,10 @@
                 // 2. Start the LOAD timer
                 myStartLoadTimer();
 
-
-
-// 1. Load LiteRT Wasm (The core runtime engine)
+                // 3. Load LiteRT Wasm (The core runtime engine)
                 await LiteRT.loadLiteRt('https://cdn.jsdelivr.net/npm/@litertjs/core@0.2.1/wasm/');
-
-                // 2. Initialize TF.js and its backends (TF.js automatically finds the best)
-                await tf.ready(); 
                 
-                // 3. Connect LiteRT to TF.js's WebGPU device
+                // 4. Connect LiteRT to the initialized TF.js backend (WebGPU if available)
                 const myTfBackend = tf.backend();
                 if (myTfBackend.device) {
                     LiteRT.setWebGpuDevice(myTfBackend.device);
@@ -164,21 +159,13 @@
                 
                 console.log('Loading and compiling model...');
                 myModel = await LiteRT.loadAndCompile(myModelUrl, {
-                    accelerator: 'webgpu', 
-                });
-
-
-              
-                
-                console.log('Loading and compiling model...');
-                myModel = await LiteRT.loadAndCompile(myModelUrl, {
                     accelerator: 'webgpu', // Use the fast WebGPU backend
                 });
 
-                // 4. Stop the LOAD timer and update status
+                // 5. Stop the LOAD timer and update status
                 myStopLoadTimer(`Loaded: ${myLoadStatusSpan.textContent}`);
                 
-                // 5. Start Prediction Loop
+                // 6. Start Prediction Loop
                 console.log('Model loaded. Starting prediction timer.');
                 myLoadButton.textContent = 'Compiling...';
                 myAnalysisStatusSpan.textContent = 'Compiling/First Run...';
