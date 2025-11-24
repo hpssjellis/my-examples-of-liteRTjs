@@ -3,7 +3,7 @@
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
-    <title>Unified FOMO & Classification Detector (LiteRT.js Step 3: Correct Import)</title>
+    <title>Unified FOMO & Classification Detector (LiteRT.js Final Import Fix)</title>
 
     <style>
         body { 
@@ -212,8 +212,8 @@
         // 📦 LITE RT.JS MODULE IMPORTS
         // =================================================================
         import * as LiteRT from 'https://cdn.jsdelivr.net/npm/@litertjs/core@0.2.1/+esm';
-        // ⚠️ CORRECTED IMPORT: Import TFLiteModel directly from the interop package
-        import { TFLiteModel } from 'https://cdn.jsdelivr.net/npm/@litertjs/tfjs-interop/+esm';
+        // ⚠️ CORRECTED IMPORT: Use namespace import for tfjs-interop
+        import * as TFLiteInteropModule from 'https://cdn.jsdelivr.net/npm/@litertjs/tfjs-interop/+esm';
         import 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs/dist/tf.min.js';
         import 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgpu/dist/tf-backend-webgpu.js';
 
@@ -541,8 +541,8 @@
 
         async function myLoadModel(mySource, myModelName) {
             try {
-                // 🚀 STEP 3 CHANGE: Using the directly imported TFLiteModel class
-                myModel = await TFLiteModel.load(mySource); 
+                // 🚀 FIX APPLIED HERE: Using TFLiteInteropModule.TFLiteModel.load()
+                myModel = await TFLiteInteropModule.TFLiteModel.load(mySource); 
                 
                 myCurrentModelName = myModelName;
                 myCurrentModelSize = (mySource.byteLength || mySource.length) || 0; // Rough size estimate
