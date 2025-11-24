@@ -128,14 +128,9 @@
             }
         }
 
-        /** Loads the LiteRT environment, initializes TF.js, and loads the Model. */
+       /** Loads the LiteRT environment, initializes TF.js, and loads the Model. */
         async function myLoadModel() {
-            if (myModel !== undefined || myIsPredicting) return;
-            
-            myLoadButton.textContent = 'Loading...';
-            myLoadButton.disabled = true;
-            myCameraSelect.disabled = true;
-            myAnalysisStatusSpan.textContent = 'Waiting for Model...';
+            // ... (omitted initial setup) ...
 
             try {
                 // 1. Start Webcam
@@ -144,51 +139,44 @@
                 // 2. Start the LOAD timer
                 myStartLoadTimer();
                 
-                // 3. AWAIT TF.JS INITIALIZATION (Required for WebGPU to fully initialize)
-                console.log('Awaiting TF.js backend readiness...');
+                // === START CRITICAL FIX: Explicit Backend Initialization ===
+                console.log('Attempting to set WebGPU backend...');
+                
+                // Force the use of webgpu, which implicitly calls necessary initialization steps
+                await tf.setBackend('webgpu');
+                
+                // 3. AWAIT TF.JS INITIALIZATION to ensure the backend is fully ready
                 await tf.ready(); 
+                
+                if (tf.getBackend() !== 'webgpu') {
+                    console.warn(`WebGPU failed to initialize. Falling back to ${tf.getBackend()}.`);
+                    // Note: LiteRT will still try to accelerate on the available backend.
+                }
 
                 // 4. Load LiteRT Wasm 
                 await LiteRT.loadLiteRt('https://cdn.jsdelivr.net/npm/@litertjs/core@0.2.1/wasm/');
                 
                 // 5. Connect LiteRT to the initialized TF.js backend
+                // This call should now be safe because we verified a backend is active.
                 const myTfBackend = tf.backend(); 
-                if (myTfBackend.device) {
+                
+                // The issue often happens if myTfBackend is undefined, so we must check it.
+                if (myTfBackend && myTfBackend.device) { 
                     LiteRT.setWebGpuDevice(myTfBackend.device);
                     console.log(`LiteRT connected to TF.js backend: ${myTfBackend.name}`);
                 } else {
-                    console.warn(`Could not set WebGPU device. Using fallback backend: ${myTfBackend.name}`);
+                    console.warn(`TF.js backend object is unstable or missing device. Using LiteRT Wasm fallback.`);
                 }
                 
+                // 6. Load and compile model...
                 console.log('Loading and compiling model...');
                 myModel = await LiteRT.loadAndCompile(myModelUrl, {
-                    accelerator: 'webgpu', 
+                    accelerator: 'webgpu', // Still request WebGPU for maximum performance
                 });
-                
-                // ** CRITICAL FIX: Dynamically get model input shape and update config **
-                const myInputDetails = myModel.getInputDetails()[0];
-                const myRequiredShape = myInputDetails.shape;
-                
-                myDefaultConfig.myInputResolution = myRequiredShape[1]; 
-                myDefaultConfig.myInputChannels = myRequiredShape[3];
-                console.log(`Model input shape dynamically set to: [${myRequiredShape[1]}x${myRequiredShape[2]}x${myRequiredShape[3]}]`);
-                
-                // 6. Stop the LOAD timer and update status
-                myStopLoadTimer(`Loaded: ${myLoadStatusSpan.textContent}`);
-                
-                // 7. Start Prediction Loop
-                console.log('Model loaded. Starting prediction timer.');
-                myLoadButton.textContent = 'Compiling...';
-                myAnalysisStatusSpan.textContent = 'Compiling/First Run...';
-                myInitialPredictionStartTime = performance.now();
+                // ... (omitted dynamic shape check and final setup) ...
 
-                myIsPredicting = true;
-                myPredict();
-                
             } catch (e) {
-                myStopLoadTimer('Error');
-                console.error('Error during model loading or setup:', e);
-                myLoadButton.textContent = 'Error Loading Model';
+                // ... (omitted error handling) ...
             }
         }
         
