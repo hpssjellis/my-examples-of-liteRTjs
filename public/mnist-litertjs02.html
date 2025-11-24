@@ -7,13 +7,14 @@
     
     <script type="module">
         // --- Imports ---
+
         import * as LiteRT from 'https://cdn.jsdelivr.net/npm/@litertjs/core@0.2.1/+esm';
         import * as LiteRTInterop from 'https://cdn.jsdelivr.net/npm/@litertjs/tfjs-interop/+esm';
         
-   //    import * as tf from 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs/dist/tf.min.js'; 
+        // Core TF.js (Must be first)
         import * as tf from 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs/+esm'; 
-        
-        import 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgpu/dist/tf-backend-webgpu.js';
+        // WebGPU Backend (Registers itself with 'tf')
+        import 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgpu/+esm';
         
         // --- Configuration (User's Preferences) ---
         const myDefaultConfig = {
