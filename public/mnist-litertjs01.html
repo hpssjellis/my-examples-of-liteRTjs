@@ -1,0 +1,288 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0" />
+    <title>LiteRT.js MINST Classification Demo</title>
+    
+    <script type="module">
+        // --- Imports ---
+        import * as LiteRT from 'https://cdn.jsdelivr.net/npm/@litertjs/core@0.2.1/+esm';
+        import * as LiteRTInterop from 'https://cdn.jsdelivr.net/npm/@litertjs/tfjs-interop/+esm';
+        import * as tf from 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs/dist/tf.min.js';
+        import 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgpu/dist/tf-backend-webgpu.js';
+        
+        // --- Configuration (User's Preferences) ---
+        const myDefaultConfig = {
+            myDefaultUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/MINST.tflite',
+            myInputResolution: 28, // MNIST models are typically 28x28
+            myConfidenceThreshold: 0.5,
+            myClassLabels: ['background', '0', '1', '2', '3', '4', '5', '6', '7', '8', '9'],
+            myInputChannels: 1, // MNIST is grayscale (1 channel)
+            myModelType: 'classification', // Using classification logic for this demo
+        };
+
+        // --- Global Variables (my-prefixed) ---
+        const myModelUrl = myDefaultConfig.myDefaultUrl;
+        let myModel = undefined;
+        let myIsPredicting = false;
+        let myTimerIntervalId = null; 
+        let myInitialPredictionStartTime = 0;
+
+        // --- DOM Elements ---
+        const myVideoElement = document.getElementById('webcam');
+        const myOverlayCanvas = document.getElementById('overlay');
+        const myLoadButton = document.getElementById('loadModelButton');
+        const myCameraSelect = document.getElementById('cameraSelect');
+        const myLoadStatusSpan = document.getElementById('myLoadStatus');
+        const myAnalysisStatusSpan = document.getElementById('myAnalysisStatus');
+        const myResultSpan = document.getElementById('myResult'); // New element for classification result
+
+        // --- Timer Functions (Unchanged from example, great for students!) ---
+
+        /** Starts a count-up timer. */
+        function myStartLoadTimer() {
+            let myStartTime = performance.now();
+            myLoadStatusSpan.textContent = '0.0s';
+            myTimerIntervalId = setInterval(() => {
+                let myElapsedTime = performance.now() - myStartTime;
+                myLoadStatusSpan.textContent = `${(myElapsedTime / 1000).toFixed(1)}s`;
+            }, 100);
+        }
+
+        /** Stops and clears the count-up timer. */
+        function myStopLoadTimer(myFinalMessage) {
+            if (myTimerIntervalId !== null) {
+                clearInterval(myTimerIntervalId);
+                myTimerIntervalId = null;
+            }
+            myLoadStatusSpan.textContent = myFinalMessage;
+        }
+
+        // --- Core Functions (myGetCameras, myEnableWebcam, myLoadModel - Logic is Sound) ---
+        
+        /** Populates the camera selection dropdown. */
+        async function myGetCameras() {
+            if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+                console.warn('enumerateDevices() not supported.');
+                return;
+            }
+
+            try {
+                // Request media access first to get device labels
+                await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+                const myDevices = await navigator.mediaDevices.enumerateDevices();
+                const myVideoDevices = myDevices.filter(myDevice => myDevice.kind === 'videoinput');
+                
+                myCameraSelect.innerHTML = '';
+                
+                if (myVideoDevices.length === 0) {
+                    myCameraSelect.innerHTML = '<option>No Camera Found</option>';
+                    myCameraSelect.disabled = true;
+                    return;
+                }
+
+                myVideoDevices.forEach((myDevice, myIndex) => {
+                    const myOption = document.createElement('option');
+                    myOption.value = myDevice.deviceId;
+                    myOption.text = myDevice.label || `Camera ${myIndex + 1}`; 
+                    myCameraSelect.appendChild(myOption);
+                });
+
+                myCameraSelect.disabled = false;
+                
+            } catch (e) {
+                console.error('Error listing devices:', e);
+            }
+        }
+        
+        /** Enables the webcam. */
+        async function myEnableWebcam(myDeviceId) {
+            if (myVideoElement.srcObject) {
+                myVideoElement.srcObject.getTracks().forEach(track => track.stop());
+            }
+
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                console.error('Browser API navigator.mediaDevices.getUserMedia not available');
+                return;
+            }
+            
+            const myVideoConfig = {
+                'audio': false,
+                'video': {
+                    deviceId: myDeviceId ? { exact: myDeviceId } : undefined,
+                    width: 640,
+                    height: 480
+                }
+            };
+            
+            try {
+                const myStream = await navigator.mediaDevices.getUserMedia(myVideoConfig);
+                myVideoElement.srcObject = myStream;
+                await new Promise(resolve => myVideoElement.onloadedmetadata = resolve);
+                console.log('Video stream started successfully.');
+            } catch (e) {
+                console.error('Error enabling webcam:', e);
+            }
+        }
+
+        /** Loads the LiteRT environment and the Model. */
+        async function myLoadModel() {
+            if (myModel !== undefined || myIsPredicting) return;
+            
+            myLoadButton.textContent = 'Loading...';
+            myLoadButton.disabled = true;
+            myCameraSelect.disabled = true;
+            myAnalysisStatusSpan.textContent = 'Waiting for Model...';
+
+            try {
+                // 1. Start Webcam
+                await myEnableWebcam(myCameraSelect.value);
+
+                // 2. Start the LOAD timer
+                myStartLoadTimer();
+
+                // 3. Load Model & Backend
+                console.log('Setting up WebGPU backend...');
+                await tf.setBackend('webgpu');
+                
+                // Load LiteRT Wasm (The core runtime engine)
+                await LiteRT.loadLiteRt('https://cdn.jsdelivr.net/npm/@litertjs/core@0.2.1/wasm/');
+            
+                const myTfBackend = tf.backend();
+                LiteRT.setWebGpuDevice(myTfBackend.device); // Connect LiteRT to TF.js's GPU device
+                
+                console.log('Loading and compiling model...');
+                myModel = await LiteRT.loadAndCompile(myModelUrl, {
+                    accelerator: 'webgpu', // Use the fast WebGPU backend
+                });
+
+                // 4. Stop the LOAD timer and update status
+                myStopLoadTimer(`Loaded: ${myLoadStatusSpan.textContent}`);
+                
+                // 5. Start Prediction Loop
+                console.log('Model loaded. Starting prediction timer.');
+                myLoadButton.textContent = 'Compiling...';
+                myAnalysisStatusSpan.textContent = 'Compiling/First Run...';
+                myInitialPredictionStartTime = performance.now();
+
+                myIsPredicting = true;
+                myPredict();
+                
+            } catch (e) {
+                myStopLoadTimer('Error');
+                console.error('Error during model loading or setup:', e);
+                myLoadButton.textContent = 'Error Loading Model';
+            }
+        }
+        
+        /**
+         * Main prediction loop.
+         * MODIFIED: Uses classification logic (softmax, argMax) instead of depth estimation.
+         */
+        async function myPredict() {
+            if (myModel === undefined || !myIsPredicting) return;
+            
+            // --- First Run Compilation Timer Logic (Unchanged and important) ---
+            if (myInitialPredictionStartTime > 0) {
+                await tf.backend().queue.onSubmittedWorkDone();
+                const myInitialDelay = performance.now() - myInitialPredictionStartTime;
+                myAnalysisStatusSpan.textContent = `Delay: ${(myInitialDelay / 1000).toFixed(2)}s`;
+                myLoadButton.textContent = 'Running';
+                myInitialPredictionStartTime = 0;
+            }
+
+            // The core inference block
+            tf.tidy(() => {
+                // 1. Pre-processing: Capture, Resize, Grayscale/Normalize
+                const myResizeDimension = myDefaultConfig.myInputResolution;
+                
+                let myInputTensor = tf.browser.fromPixels(myVideoElement);
+
+                // Resize to model input size (e.g., 28x28) and convert to float
+                myInputTensor = myInputTensor.resizeBilinear([myResizeDimension, myResizeDimension])
+                    .mean(2) // Convert to Grayscale (Average R, G, B channels)
+                    .expandDims(2) // Add back the channel dimension (now 28x28x1)
+                    .div(255.0) // Normalize to 0-1
+                    .expandDims(0); // Add batch dimension (1x28x28x1)
+                
+                // 2. Inference: Run the model with the LiteRT interop
+                // The input tensor must be a single argument (not an array) for runWithTfjsTensors
+                const myResults = LiteRTInterop.runWithTfjsTensors(myModel, myInputTensor);
+                
+                const myOutputTensor = myResults[0]; // Expecting one output tensor
+                
+                // 3. Post-processing: Softmax, Get Prediction, and Display
+                // Softmax converts raw logits to probabilities
+                const myProbabilities = myOutputTensor.softmax(); 
+                
+                // argMax finds the index of the highest probability
+                const myPredictionIndex = myProbabilities.argMax(1).dataSync()[0]; 
+                const myConfidence = myProbabilities.max().dataSync()[0];
+
+                // Clean up tensors
+                for (const output of myResults) {
+                    output.dispose();
+                }
+                
+                // 4. Display Results
+                if (myConfidence >= myDefaultConfig.myConfidenceThreshold) {
+                    const myLabel = myDefaultConfig.myClassLabels[myPredictionIndex];
+                    myResultSpan.textContent = `${myLabel} (${(myConfidence * 100).toFixed(1)}%)`;
+                } else {
+                    myResultSpan.textContent = `Thinking... (${(myConfidence * 100).toFixed(1)}%)`;
+                }
+                
+                // Draw the resized input for visualization on the overlay canvas
+                // This shows the students exactly what the model sees (a blurry 28x28 image)
+                tf.browser.toPixels(myInputTensor.squeeze().tile([1, 1, 3]), myOverlayCanvas); 
+
+            });
+            
+            // Only await submission for subsequent frames once initial compilation is done
+            if (myInitialPredictionStartTime === 0) {
+                await tf.backend().queue.onSubmittedWorkDone();
+            }
+            
+            requestAnimationFrame(myPredict);
+        }
+
+        /** Handles camera changes. */
+        async function myCameraChangeHandler() {
+            await myEnableWebcam(myCameraSelect.value);
+        }
+
+        // --- Initialization and Static Links ---
+        
+        myLoadButton.onclick = myLoadModel;
+        myCameraSelect.onchange = myCameraChangeHandler;
+
+        myGetCameras();
+        myEnableWebcam();
+    </script>
+</head>
+<body style="margin:0; padding:0; height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; background-color:#111; color:white;">
+    <div id="controls" style="position:relative; z-index:2; margin-bottom:10px; padding:10px; background:rgba(0, 0, 0, 0.7); border-radius:5px;">
+        <label for="cameraSelect" style="margin-right:10px;">Camera:</label>
+        <select id="cameraSelect" style="padding:5px;">
+            <option value="">Loading Cameras...</option>
+        </select>
+        <button id="loadModelButton" style="padding:5px 10px; background-color:#4CAF50; color:white; border:none; border-radius:3px;">Load Model & Start</button>
+        <br>
+        <span style="font-size:12px; margin-right:10px;">Load Time: <span id="myLoadStatus" style="font-weight:bold;">Ready</span></span>
+        <span style="font-size:12px;">Analysis Delay: <span id="myAnalysisStatus" style="font-weight:bold;">N/A</span></span>
+        <h3 style="margin:5px 0 0 0; text-align:center;">
+            Prediction: <span id="myResult" style="color:#FFA726; font-size:1.2em;">---</span>
+        </h3>
+    </div>
+
+    <div style="position:relative; width:640px; height:480px; border: 2px solid #555;">
+        <video id="webcam" autoplay playsinline style="position:absolute; width:100%; height:100%; object-fit:cover; z-index:0;"></video>
+        
+        <canvas id="overlay" width="640" height="480" 
+            style="position:absolute; top:0; left:0; width:100%; height:100%; 
+                   pointer-events:none; z-index:1; opacity:0.8; 
+                   image-rendering: pixelated;"></canvas>
+    </div>
+</body>
+</html>
