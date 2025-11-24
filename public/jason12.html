@@ -1,0 +1,111 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <title>LiteRT Model Details Viewer (Full Example)</title>
+</head>
+<body>
+
+    <h2>🖼️ Select Model</h2>
+    <select id="myModelSelector" onchange="myLoadAndShowDetails(this.value)">
+        <option value="">-- Select a Model --</option>
+        <option value="model_A.tflite">Model A (Image Classifier)</option>
+        <option value="model_B.tflite">Model B (Object Detector)</option>
+    </select>
+
+    ---
+
+    <h2>📋 Input Details</h2>
+    <div id="myDetailsDisplay" style="border: 1px solid #ccc; padding: 10px; margin-top: 10px; min-height: 50px;">
+        Select a model above to view its input requirements.
+    </div>
+
+    <script>
+        // --- LiteRT Simulation and Logic ---
+
+        // Get the display element using a descriptive variable name
+        const myDetailsDisplay = document.getElementById('myDetailsDisplay');
+
+        /**
+         * Helper function to simulate the asynchronous LiteRT API call:
+         * model.getInputDetails()
+         * @param {string} myModelPath The model file path selected.
+         * @returns {Promise<Array<Object>>} A promise resolving to simulated ModelInputDetails.
+         */
+        function mySimulateLoadDetails(myModelPath) {
+            // In a real application, you would perform the actual LiteRT.js initialization, 
+            // loading, and compilation here.
+            
+            // Simulating network delay for realism (optional)
+            return new Promise(resolve => {
+                setTimeout(() => {
+                    if (myModelPath === 'model_A.tflite') {
+                        // Example details for a 224x224 RGB image
+                        resolve([
+                            {
+                                name: "input_image",
+                                shape: [1, 224, 224, 3], // [Batch, Height, Width, Channels]
+                                dtype: "float32"
+                            }
+                        ]);
+                    } else if (myModelPath === 'model_B.tflite') {
+                        // Example details for a 300x300 BGR image
+                        resolve([
+                            {
+                                name: "input_tensor",
+                                shape: [1, 300, 300, 3],
+                                dtype: "uint8"
+                            }
+                        ]);
+                    } else {
+                        resolve([]); // No details found or invalid model
+                    }
+                }, 500); // Wait 500ms
+            });
+        }
+
+        /**
+         * Loads the details for the selected model and updates the display div.
+         * This function is triggered by the 'onchange' event in the <select> tag.
+         * @param {string} mySelectedPath The model file path selected by the user.
+         */
+        async function myLoadAndShowDetails(mySelectedPath) {
+            if (!mySelectedPath) {
+                myDetailsDisplay.innerHTML = 'Select a model above to view its input requirements.';
+                return;
+            }
+
+            myDetailsDisplay.innerHTML = 'Loading model details...';
+            
+            // Use await for the simulated asynchronous call
+            const myInputDetailsArray = await mySimulateLoadDetails(mySelectedPath);
+
+            // --- Constructing the display ---
+
+            let myHtmlContent = `<h3 style="margin-top: 0;">Details for: ${mySelectedPath}</h3>`;
+
+            if (myInputDetailsArray.length === 0) {
+                myHtmlContent += '<p style="color: red;">Error: Could not load or find input details for this model.</p>';
+            } else {
+                myInputDetailsArray.forEach((myDetails, myIndex) => {
+                    // Create a readable shape string: e.g., "1 x 224 x 224 x 3"
+                    const myShapeString = myDetails.shape.join(' x ');
+                    
+                    myHtmlContent += `
+                        <div style="margin-bottom: 10px; padding: 8px; background-color: #f0f8ff; border-left: 4px solid #007bff;">
+                            <strong>Input ${myIndex + 1} Name:</strong> ${myDetails.name}
+                            <ul>
+                                <li>**Shape (Dimensions):** ${myShapeString}</li>
+                                <li>**Data Type:** ${myDetails.dtype}</li>
+                            </ul>
+                        </div>
+                    `;
+                });
+            }
+
+            // Update the display div content
+            myDetailsDisplay.innerHTML = myHtmlContent;
+        }
+    </script>
+</body>
+</html>
