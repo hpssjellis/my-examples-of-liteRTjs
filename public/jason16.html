@@ -1,0 +1,472 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0" />
+    <title>LiteRT.js Multi-Model Depth Estimation Demo</title>
+    
+    <script type="module">
+        // Import all necessary modules
+        import * as LiteRT from 'https://cdn.jsdelivr.net/npm/@litertjs/core@0.2.1/+esm';
+        import * as LiteRTInterop from 'https://cdn.jsdelivr.net/npm/@litertjs/tfjs-interop/+esm';
+        import 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs/dist/tf.min.js';
+        import 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgpu/dist/tf-backend-webgpu.js';
+        
+        // --- Model Configuration Data ---
+        const myDepthModels = [
+            { 
+                myName: "Depth-Anything V2 Large", 
+                myUrl: 'https://huggingface.co/qualcomm/Depth-Anything-V2/resolve/main/Depth-Anything-V2_float.tflite'
+            },
+            { 
+                myName: "Quantized Mobilenet V1 224 (Example)", 
+                myUrl: 'https://storage.googleapis.com/tfjs-models/demos/mobilenet/model_224/quantized/uint8/model.json' 
+            },
+            { 
+                myName: "MobileNet-Depth 256x256", 
+                myUrl: 'https://huggingface.co/qualcomm/MobileNet-Depth-Estimation/resolve/main/MobileNet-Depth-Estimation_float.tflite'
+            },
+            {
+                myName: "MiDaS v2.1 Small",
+                myUrl: 'https://huggingface.co/PINTO0309/MiDaS.tflite/resolve/main/midas_v2_small_256x256_float32.tflite'
+            },
+            {
+                myName: "my MNIST",
+                myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/MINST.tflite'
+            },
+            {
+                myName: "Fomo",
+                myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-andrew-3d-printed-symbol-fomo-object-detection-tensorflow-lite-float32-model.5.tflite'
+            },
+            {
+                myName: "fomo pen",
+                myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-fomo-pen-object-detection-tensorflow-lite-float32-model.5.tflite'
+            },
+            {
+                myName: "brush",
+                myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-jeremy-0unknown-1brush-2paint-v01-transfer-learning-tensorflow-lite-float32-model.5.tflite'
+            },
+            {
+                myName: "96 mnist",
+                myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-v1-5-0-minst-96x96-f180-object-detection-tensorflow-lite-float32-model.5.tflite'
+            },
+            {
+                myName: "Jer Cups",
+                myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-v8-1-1-jeremy-rc-car-1red-2white-cup-fomo-96x96-object-detection-tensorflow-lite-float32-model.5.tflite'
+            },
+            {
+                myName: "anomoly",
+                myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-v1-motion-anamoly-still-classifier-tensorflow-lite-float32-model.15.tflite'
+            },
+            {
+                myName: "pen",
+                myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-v1-fomo-pen-jeremy-object-detection-tensorflow-lite-float32-model.5.tflite'
+            }
+        ];
+
+        // --- Global Variables (my-prefixed) ---
+        let myModel = undefined;
+        let myIsPredicting = false;
+        let myTimerIntervalId = null; 
+        let myInitialPredictionStartTime = 0; 
+        let myCurrentInputShape = 0;
+        let myModelName = ''; 
+        let myInputChannels = 3; 
+        let myInputDtype = 'float32'; 
+        let myOutputShapeString = 'N/A';
+        let myLoadedModelUrl = ''; 
+
+        // --- DOM Element References ---
+        const myVideoElement = document.getElementById('webcam');
+        const myOverlayCanvas = document.getElementById('overlay');
+        const myLoadButton = document.getElementById('loadModelButton');
+        const myCameraSelect = document.getElementById('cameraSelect');
+        const myModelSelect = document.getElementById('modelSelect'); 
+        const myModelUrlInput = document.getElementById('myModelUrlInput'); 
+        const myLoadStatusSpan = document.getElementById('myLoadStatus');
+        const myAnalysisStatusSpan = document.getElementById('myAnalysisStatus');
+        const myInputShapeSpan = document.getElementById('myInputShapeStatus');
+        const myInputDtypeSpan = document.getElementById('myInputDtypeStatus'); 
+        const myOutputDetailsSpan = document.getElementById('myOutputDetailsStatus'); 
+
+        // --- Timer Functions (Unchanged) ---
+        function myStartLoadTimer() {
+            let myStartTime = performance.now();
+            myLoadStatusSpan.textContent = '0.0s';
+            myTimerIntervalId = setInterval(() => {
+                let myElapsedTime = performance.now() - myStartTime;
+                myLoadStatusSpan.textContent = `${(myElapsedTime / 1000).toFixed(1)}s`;
+            }, 100);
+        }
+
+        function myStopLoadTimer(myFinalMessage) {
+            if (myTimerIntervalId !== null) {
+                clearInterval(myTimerIntervalId);
+                myTimerIntervalId = null;
+            }
+            myLoadStatusSpan.textContent = myFinalMessage;
+        }
+        
+        // --- Utility Functions ---
+        function myStopPredictionAndReset() {
+            if (myIsPredicting) {
+                myIsPredicting = false;
+            }
+            // IMPORTANT: Do NOT dispose of myModel here. It is handled in myPreLoadModelMetadata 
+            // only when a *different* URL is selected/entered.
+            myLoadButton.textContent = 'Load Model & Start';
+            myLoadButton.disabled = false;
+            myCameraSelect.disabled = false;
+            myAnalysisStatusSpan.textContent = 'N/A';
+            myInitialPredictionStartTime = 0;
+        }
+
+        function myPopulateModelSelect() {
+            myModelSelect.innerHTML = ''; 
+            myDepthModels.forEach((myModel, myIndex) => {
+                const myOption = document.createElement('option');
+                myOption.value = myModel.myUrl;
+                myOption.text = myModel.myName;
+                myModelSelect.appendChild(myOption);
+            });
+            
+            if (myDepthModels.length > 0) {
+                 myModelUrlInput.value = myDepthModels[0].myUrl;
+            }
+            // Initial load of the first model's metadata
+            myPreLoadModelMetadata();
+        }
+
+        async function myEnableWebcam(myDeviceId) {
+            if (myVideoElement.srcObject) {
+                myVideoElement.srcObject.getTracks().forEach(track => track.stop());
+                myVideoElement.srcObject = null;
+            }
+            
+            if (!navigator.mediaDevices || !navigator.mediaDevices.getUserMedia) {
+                console.error('Browser API navigator.mediaDevices.getUserMedia not available');
+                return;
+            }
+            
+            const myVideoConfig = {
+                'audio': false,
+                'video': {
+                    deviceId: myDeviceId ? { exact: myDeviceId } : undefined,
+                    width: 640,
+                    height: 480
+                }
+            };
+            
+            try {
+                const myStream = await navigator.mediaDevices.getUserMedia(myVideoConfig);
+                myVideoElement.srcObject = myStream;
+                await new Promise(resolve => myVideoElement.onloadedmetadata = resolve);
+                myVideoElement.play(); 
+            } catch (e) {
+                console.error('Error enabling webcam:', e);
+            }
+        }
+        
+        async function myGetCameras() {
+             if (!navigator.mediaDevices || !navigator.mediaDevices.enumerateDevices) {
+                console.warn('enumerateDevices() not supported.');
+                return;
+            }
+
+            try {
+                const myTempStream = await navigator.mediaDevices.getUserMedia({ video: true, audio: false });
+                myTempStream.getTracks().forEach(track => track.stop());
+
+                const myDevices = await navigator.mediaDevices.enumerateDevices();
+                const myVideoDevices = myDevices.filter(myDevice => myDevice.kind === 'videoinput');
+                
+                myCameraSelect.innerHTML = '';
+                
+                if (myVideoDevices.length === 0) {
+                    myCameraSelect.innerHTML = '<option>No Camera Found</option>';
+                    myCameraSelect.disabled = true;
+                    return;
+                }
+
+                myVideoDevices.forEach((myDevice, myIndex) => {
+                    const myOption = document.createElement('option');
+                    myOption.value = myDevice.deviceId;
+                    myOption.text = myDevice.label || `Camera ${myIndex + 1}`; 
+                    myCameraSelect.appendChild(myOption);
+                });
+
+                myCameraSelect.disabled = false;
+                
+            } catch (e) {
+                console.error('Error listing devices or getting stream:', e);
+                myCameraSelect.innerHTML = '<option>Access Denied or Error</option>';
+            }
+        }
+        
+
+        /**
+         * Loads and compiles the model structure using the URL from the text input.
+         */
+        async function myPreLoadModelMetadata() {
+            myStopPredictionAndReset();
+
+            const myModelUrl = myModelUrlInput.value.trim();
+            if (!myModelUrl) {
+                myStopLoadTimer('Enter Model URL');
+                myLoadButton.disabled = true; // Disable if URL is empty
+                return;
+            }
+
+            // 1. Check if we already have this model loaded
+            if (myLoadedModelUrl === myModelUrl) {
+                // If the URL is the same, no need to re-load or re-compile
+                myStopLoadTimer('Already Loaded');
+                myLoadButton.disabled = false;
+                return;
+            }
+            
+            // 2. 🌟 CRITICAL FIX: Dispose of the old model if the URL has changed
+            if (myModel) {
+                try {
+                    myModel.delete();
+                    console.log(`Disposed of previous model: ${myLoadedModelUrl}`);
+                } catch(e) {
+                     console.warn("Could not dispose of previous model gracefully:", e);
+                }
+                myModel = undefined;
+            }
+            myLoadedModelUrl = ''; // Clear the tracking variable
+
+            // 3. Update UI for new load
+            myLoadButton.textContent = 'Loading...';
+            myLoadButton.disabled = true;
+            myLoadStatusSpan.textContent = 'Downloading...';
+            myInputShapeSpan.textContent = '...';
+            myInputDtypeSpan.textContent = '...'; 
+            myOutputDetailsSpan.textContent = '...'; 
+
+            try {
+                // Initialize LiteRT and WebGPU (Only runs once, quickly checks state)
+                await tf.setBackend('webgpu');
+                await LiteRT.loadLiteRt('https://cdn.jsdelivr.net/npm/@litertjs/core@0.2.1/wasm/');
+                const myTfBackend = tf.backend();
+                LiteRT.setWebGpuDevice(myTfBackend.device);
+
+                myStartLoadTimer();
+                
+                // 4. Load and Compile the Model
+                myModel = await LiteRT.loadAndCompile(myModelUrl, {
+                    accelerator: 'webgpu',
+                });
+                myLoadedModelUrl = myModelUrl; 
+
+                // --- CHECK INPUT DETAILS ---
+                const myInputDetails = myModel.getInputDetails();
+                
+                if (myInputDetails.length > 0 && myInputDetails[0].shape.length >= 3) {
+                    myCurrentInputShape = myInputDetails[0].shape[1]; 
+                    myInputChannels = myInputDetails[0].shape[3] || 1; 
+                    myInputDtype = myInputDetails[0].dtype || 'float32'; 
+
+                    myInputShapeSpan.textContent = `${myCurrentInputShape}x${myCurrentInputShape} (${myInputChannels} Ch)`;
+                    myInputDtypeSpan.textContent = myInputDtype;
+                } else {
+                    throw new Error("Could not determine model input shape from metadata.");
+                }
+
+                // --- CHECK OUTPUT DETAILS ---
+                const myOutputDetails = myModel.getOutputDetails();
+                
+                if (myOutputDetails.length > 0) {
+                    const myOutputShape = myOutputDetails[0].shape;
+                    const myOutputShapeString = myOutputShape.join('x');
+                    const myLabelsCount = myOutputShape.length > 1 ? myOutputShape[myOutputShape.length - 1] : 1; 
+
+                    myOutputDetailsSpan.textContent = `${myOutputShapeString} (${myLabelsCount} Output)`;
+                } else {
+                    myOutputDetailsSpan.textContent = 'N/A';
+                }
+                
+                myStopLoadTimer(`Ready: ${myLoadStatusSpan.textContent}`);
+                myLoadButton.textContent = 'Load Model & Start';
+                myLoadButton.disabled = false; 
+                
+            } catch (e) {
+                myStopLoadTimer('Error');
+                console.error('Error during model loading or setup:', e);
+                myLoadButton.textContent = 'Error Loading Model';
+                myLoadedModelUrl = ''; // Clear the URL on failure
+            }
+        }
+        
+        // Simplified load function now that model is pre-loaded on selection/input change
+        async function myLoadModel() {
+            if (myIsPredicting || myLoadButton.disabled || !myModel) return; 
+
+            await myEnableWebcam(myCameraSelect.value);
+
+            myLoadButton.textContent = 'Compiling...';
+            myLoadButton.disabled = true; 
+            myModelSelect.disabled = true; 
+            myCameraSelect.disabled = true;
+            myAnalysisStatusSpan.textContent = `Compiling...`;
+            myInitialPredictionStartTime = performance.now(); 
+
+            myIsPredicting = true;
+            myPredict();
+        }
+        
+        // Prediction logic with quantization support (Unchanged)
+        async function myPredict() {
+            if (myModel === undefined || !myIsPredicting || myCurrentInputShape === 0) {
+                return;
+            }
+
+            if (myInitialPredictionStartTime > 0) {
+                await tf.backend().queue.onSubmittedWorkDone();
+                
+                const myInitialDelay = performance.now() - myInitialPredictionStartTime;
+                myAnalysisStatusSpan.textContent = `Delay: ${(myInitialDelay / 1000).toFixed(2)}s`;
+                myLoadButton.textContent = 'Running';
+                myLoadButton.disabled = true; 
+                myInitialPredictionStartTime = 0; 
+            }
+
+            tf.tidy(() => {
+                const myStartTime = performance.now(); 
+                
+                let myInputTensor = tf.browser.fromPixels(myVideoElement)
+                    .resizeBilinear([myCurrentInputShape, myCurrentInputShape]); 
+
+                if (myInputDtype.startsWith('float')) {
+                    myInputTensor = myInputTensor.div(255.0);
+                } else if (myInputDtype.includes('int')) {
+                    myInputTensor = myInputTensor.cast(myInputDtype); 
+                }
+                
+                myInputTensor = myInputTensor.expandDims(); 
+                
+                const myResults = LiteRTInterop.runWithTfjsTensors(myModel, myInputTensor);
+                const myOutputTensor = myResults[0];
+                
+                // Post-processing and visualization 
+                const myMin = myOutputTensor.min();
+                const myMax = myOutputTensor.max();
+                const myNormalized = myOutputTensor.sub(myMin).div(myMax.sub(myMin)).squeeze();
+                
+                const myZeros = tf.zerosLike(myNormalized);
+                const myBlueChannel = tf.sub(1, myNormalized);
+                const myRgbTensor = tf.stack([myZeros, myNormalized, myBlueChannel], 2);
+                
+                const videoRatio = myVideoElement.videoWidth / myVideoElement.videoHeight;
+                const windowRatio = 640 / 480; 
+                const scale = videoRatio / windowRatio;
+                
+                if (scale > 1) {
+                    myOverlayCanvas.style.scale = `${scale} 1`;
+                } else {
+                    myOverlayCanvas.style.scale = `1 ${1 / scale}`;
+                }
+                
+                tf.browser.draw(myRgbTensor.clipByValue(0, 1), myOverlayCanvas, { flipHorizontal: true });
+                
+                for (const output of myResults) {
+                    output.dispose();
+                }
+
+                const myEndTime = performance.now();
+                const myFrameTime = myEndTime - myStartTime;
+                if (myInitialPredictionStartTime === 0) {
+                    myAnalysisStatusSpan.textContent = `${myFrameTime.toFixed(0)}ms / ${(1000 / myFrameTime).toFixed(1)} FPS`;
+                }
+            });
+            
+            if (myInitialPredictionStartTime === 0) {
+                await tf.backend().queue.onSubmittedWorkDone();
+            }
+            
+            requestAnimationFrame(myPredict);
+        }
+
+        // --- Event Handlers ---
+        async function myCameraChangeHandler() {
+            if (myIsPredicting) {
+                myStopPredictionAndReset();
+            }
+            await myEnableWebcam(myCameraSelect.value);
+        }
+
+        function myModelChangeHandler() {
+            // Stop prediction. Update the text input with the selected URL, 
+            // then trigger the metadata load via the text input handler.
+            myStopPredictionAndReset();
+            const mySelectedOption = myModelSelect.options[myModelSelect.selectedIndex];
+            myModelUrlInput.value = mySelectedOption.value;
+            myPreLoadModelMetadata(); 
+        }
+        
+        function myModelUrlInputHandler() {
+             // Stop prediction and immediately load the model's metadata using the text input
+            myStopPredictionAndReset();
+            myPreLoadModelMetadata();
+        }
+
+
+        // --- Initialization and Event Listeners (Static Links) ---
+        myLoadButton.onclick = myLoadModel;
+        myCameraSelect.onchange = myCameraChangeHandler;
+        myModelSelect.onchange = myModelChangeHandler; 
+        myModelUrlInput.onchange = myModelUrlInputHandler; 
+
+        myPopulateModelSelect(); 
+        myGetCameras();
+        myEnableWebcam();
+    </script>
+</head>
+<body style="margin:0; padding:0; height:100vh; display:flex; flex-direction:column; align-items:center; justify-content:center; background-color:#000;">
+    <div id="controls" style="position:relative; z-index:2; margin-bottom:10px; padding:5px; background:rgba(255, 255, 255, 0.9); display:flex; flex-direction:column; gap:5px; align-items:center; justify-content:center; max-width: 90vw; border-radius: 8px;">
+        <div style="display:flex; flex-wrap:wrap; gap:10px; align-items:center; justify-content:center;">
+            <div>
+                <label for="cameraSelect">Camera:</label>
+                <select id="cameraSelect">
+                    <option value="">Loading Cameras...</option>
+                </select>
+            </div>
+            
+            <div>
+                <label for="modelSelect">Model Preset:</label>
+                <select id="modelSelect">
+                    </select>
+            </div>
+        </div>
+        
+        <div style="width: 100%; display: flex; flex-direction: column; align-items: center; gap: 5px;">
+            <label for="myModelUrlInput" style="font-weight: bold;">Custom Model URL (Change to Load Metadata):</label>
+            <input type="text" id="myModelUrlInput" style="width: 95%; padding: 5px; border: 1px solid #ccc;" placeholder="Paste .tflite or .json URL here"/>
+        </div>
+
+        <button id="loadModelButton" style="padding: 10px 20px; font-weight: bold;">Load Model & Start</button>
+        
+        <hr style="width: 100%; border: 0; border-top: 1px solid #ccc; margin: 5px 0;">
+
+        <div style="display:flex; flex-wrap:wrap; gap:10px; font-size:12px; justify-content:center;">
+            <span>Input Size: **<span id="myInputShapeStatus">N/A</span>**</span>
+            <span>Input DType: **<span id="myInputDtypeStatus">N/A</span>**</span>
+            <span>Output Shape: **<span id="myOutputDetailsStatus">N/A</span>**</span>
+            <span>Load Time: **<span id="myLoadStatus">Ready</span>**</span>
+            <span>Analysis Delay/FPS: **<span id="myAnalysisStatus">N/A</span>**</span>
+        </div>
+    </div>
+
+    <div style="position:relative; width:640px; height:480px; border: 1px solid white; overflow:hidden;">
+        <video id="webcam" autoplay playsinline style="position:absolute; width:100%; height:100%; object-fit:cover; z-index:0;"></video>
+        <canvas id="output" style="position:absolute; width:100%; height:100%; z-index:0;"></canvas> 
+        <canvas id="overlay" style="position:absolute; top:0; left:0; width:100%; height:100%; pointer-events:none; z-index:1; opacity:0.5;"></canvas>
+    </div>
+    
+    <section id="demos" style="display:none;">
+        <h1>LiteRT.js Depth Estimation Demo</h1>
+        <p>This demo performs real-time depth estimation.</p>
+    </section>
+</body>
+</html>
