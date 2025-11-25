@@ -142,7 +142,7 @@
             }
 
             // Set initial status when listener starts
-           // myClassificationOutputDiv.innerHTML = `Collecting Motion Data... (Required: **${myMotionSequenceLength} points**)`;
+            myClassificationOutputDiv.innerHTML = `Collecting Motion Data... (Required: **${myMotionSequenceLength} points**)`;
         }
 
         function myStopMotionListener() {
@@ -250,7 +250,7 @@
                         myOutputHtml += `${myLabel}: **${(myRes.myScore * 100).toFixed(2)}%**<br>`;
                     });
 
-                    myClassificationOutputDiv.innerHTML = myOutputHtml;
+                    myClassificationOutputDiv.innerHTML += myOutputHtml;
                     console.log('myOutputHtml')
                     console.log(myOutputHtml)
                     break;
