@@ -397,7 +397,7 @@
                         myResults.forEach(r => r.dispose());
                     } else {
                          // Keep the status updated while waiting for enough data
-                        myClassificationOutputDiv.innerHTML = ` (Need **${myMotionSequenceLength} points**, Have **${Math.floor(myMotionData.length/3)} points**)`;
+                        myClassificationOutputDiv.innerHTML += ` ${myMotionSequenceLength}/${Math.floor(myMotionData.length/3)}`;
                     }
                 });
             } else {
