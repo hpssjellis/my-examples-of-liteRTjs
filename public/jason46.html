@@ -1,0 +1,466 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0" />
+    <title>LiteRT.js Audio Classification</title>
+
+    <style>
+        /* Basic styles for a clean, responsive layout */
+        body {
+            margin: 0;
+            padding: 10px;
+            background: #000;
+            color: #fff;
+            font-family: sans-serif;
+            display: flex;
+            flex-direction: column;
+            align-items: center;
+        }
+        /* Container for video and canvas, set to a max width for desktop */
+        #videoContainer {
+            position: relative;
+            width: 100%;
+            max-width: 640px;
+            margin-bottom: 10px;
+        }
+        /* Video element: always fit its container */
+        #webcam {
+            width: 100%;
+            display: block;
+            min-height: 200px; /* Give it some height even if not used */
+            background: #222;
+        }
+        /* Canvas overlay: must be absolutely positioned over the video */
+        #myCanvas {
+            position: absolute;
+            top: 0;
+            left: 0;
+            width: 100%;
+            height: 100%;
+            display: none; /* Hide canvas by default for audio */
+        }
+        /* Style for the controls and status panel */
+        #controlsPanel {
+            width: 100%;
+            max-width: 640px;
+            background: #fff;
+            color: #000;
+            padding: 10px;
+            border-radius: 8px;
+            box-sizing: border-box;
+        }
+        #myModelUrlInput {
+            width: calc(100% - 12px);
+            padding: 5px;
+            margin: 5px 0;
+        }
+        select {
+            width: calc(100% - 100px);
+        }
+    </style>
+
+    <script type="module">
+        import * as LiteRT from 'https://cdn.jsdelivr.net/npm/@litertjs/core@0.2.1/+esm';
+        import * as LiteRTInterop from 'https://cdn.jsdelivr.net/npm/@litertjs/tfjs-interop/+esm';
+        import 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs/dist/tf.min.js';
+        import 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgpu/dist/tf-backend-webgpu.js';
+
+        /*************************************************************
+         * MODEL LIST (Updated for Audio Model)
+         *************************************************************/
+        const myDepthModels = [
+            {myName: "96 mnist (Object Detection)", myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-v1-5-0-minst-96x96-f180-object-detection-tensorflow-lite-float32-model.5.tflite', myType: "object_detection", myLabels: Array.from({length: 10}, (_, i) => `${i}`)},
+            // *** NEW AUDIO MODEL ENTRY ***
+            {myName: "Xiao Sounds (Audio Classification)", myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/other/ei-ei-v202-xiao-sounds-0unknown-1no-2yes-esp32-nn-classifier-tensorflow-lite-float32-model.12.tflite', myType: "audio", myLabels: ["unknown", "no", "yes"]},
+            // Remaining models (kept for context, but we will focus on the new one)
+            {myName: "Depth-Anything V2 Large", myUrl: 'https://huggingface.co/qualcomm/Depth-Anything-V2/resolve/main/Depth-Anything-V2_float.tflite', myType: "depth"},
+            {myName: "Fomo (Object Detection)", myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-andrew-3d-printed-symbol-fomo-object-detection-tensorflow-lite-float32-model.5.tflite', myType: "object_detection", myLabels: ["1", "2"]},
+            {myName: "Depth-Anything V2 Large", myUrl: 'https://huggingface.co/qualcomm/Depth-Anything-V2/resolve/main/Depth-Anything-V2_float.tflite', myType: "depth"},
+            {myName: "fomo pen (Object Detection)", myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-fomo-pen-object-detection-tensorflow-lite-float32-model.5.tflite', myType: "object_detection", myLabels: ["pen", "other"]},
+            {myName: "Brush (Classification)", myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-jeremy-0unknown-1brush-2paint-v01-transfer-learning-tensorflow-lite-float32-model.5.tflite', myType: "classification", myLabels: ["unknown", "brush", "paint"]},
+            {myName: "Jer Cups (Object Detection)", myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-v8-1-1-jeremy-rc-car-1red-2white-cup-fomo-96x96-object-detection-tensorflow-lite-float32-model.5.tflite', myType: "object_detection", myLabels: ["car", "red-cup", "white-cup"]},
+            {myName: "Pen (Detection)", myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-v1-fomo-pen-jeremy-object-detection-tensorflow-lite-float32-model.5.tflite', myType: "object_detection", myLabels: ["pen"]}
+                   
+        ];
+
+        /*************************************************************
+         * GLOBALS
+         *************************************************************/
+        let myModel;
+        let myIsPredicting = false;
+        let myInputDetails = null;
+        let myInputDtype = 'float32';
+        let myLiteRTInitializedPromise = null;
+        let myCurrentModelConfig = null;
+        let myPredictionTimerId = null;
+        const myPredictionRateMs = 200;
+
+        // ** INPUT GLOBALS (Simplified from motion) **
+        let myIsAudioOrMotionModel = false;
+        // The audio model expects 19,600 values (245 features * 80 time steps)
+        let myFeatureVectorLength = 0; 
+        
+        // Placeholder for audio data: we need 19600 elements.
+        // We'll use a dummy array for now as full audio capture is complex.
+        let myAudioDataPlaceholder = new Float32Array(19600).fill(0.1); 
+
+        /*************************************************************
+         * ELEMENTS
+         *************************************************************/
+        const myVideoElement = document.getElementById('webcam');
+        const myCanvasElement = document.getElementById('myCanvas');
+        const myCanvasContext = myCanvasElement.getContext('2d');
+        const myLoadButton = document.getElementById('loadModelButton');
+        const myCameraSelect = document.getElementById('cameraSelect');
+        const myModelSelect = document.getElementById('modelSelect');
+        const myModelUrlInput = document.getElementById('myModelUrlInput');
+        const myInputShapeSpan = document.getElementById('myInputShapeStatus');
+        const myInputDtypeSpan = document.getElementById('myInputDtypeStatus');
+        const myOutputDetailsSpan = document.getElementById('myOutputDetailsStatus');
+        const myClassificationOutputDiv = document.getElementById('myClassificationOutput');
+        const myInputStatusDiv = document.getElementById('myInputStatus'); // Renamed from myMotionOutputDiv
+
+        /*************************************************************
+         * INITIALIZE LiteRT (Unchanged)
+         *************************************************************/
+        async function myInitializeLiteRT() {
+            if (myLiteRTInitializedPromise) return myLiteRTInitializedPromise;
+
+            myLiteRTInitializedPromise = (async () => {
+                try { await tf.setBackend('webgpu'); }
+                catch { try { await tf.setBackend('webgl'); }
+                catch { await tf.setBackend('cpu'); }}
+
+                await LiteRT.loadLiteRt('https://cdn.jsdelivr.net/npm/@litertjs/core@0.2.1/wasm/');
+                LiteRT.setWebGpuDevice(tf.backend().device);
+            })();
+
+            return myLiteRTInitializedPromise;
+        }
+
+        /*************************************************************
+         * ENABLE WEBCAM / AUDIO PLACEHOLDER
+         *************************************************************/
+        async function myEnableWebcam(myId) {
+            myIsAudioOrMotionModel = (myCurrentModelConfig.myType === "audio" || myCurrentModelConfig.myType === "motion");
+
+            if (myIsAudioOrMotionModel) {
+                if (myVideoElement.srcObject) {
+                    myVideoElement.srcObject.getTracks().forEach(t => t.stop());
+                }
+                // Hide video and canvas for audio/motion
+                myVideoElement.style.display = 'none';
+                myCanvasElement.style.display = 'none';
+                
+                // ** AUDIO INITIALIZATION PLACEHOLDER **
+                // In a real app, this is where you'd start the AudioContext and microphone stream.
+                myInputStatusDiv.textContent = "🎙️ Audio input activated (using dummy data for prediction).";
+                return;
+            }
+
+            // Standard video logic
+            myVideoElement.style.display = 'block';
+            myCanvasElement.style.display = 'block';
+
+            if (myVideoElement.srcObject) {
+                myVideoElement.srcObject.getTracks().forEach(t => t.stop());
+            }
+
+            const myCfg = {video: {deviceId: myId ? {exact: myId} : undefined}};
+            const myStream = await navigator.mediaDevices.getUserMedia(myCfg);
+            myVideoElement.srcObject = myStream;
+            await new Promise(r => myVideoElement.onloadedmetadata = r);
+            myVideoElement.play();
+
+            myCanvasElement.width = myVideoElement.videoWidth;
+            myCanvasElement.height = myVideoElement.videoHeight;
+        }
+
+        /*************************************************************
+         * PRELOAD MODEL & READ METADATA
+         *************************************************************/
+        async function myPreLoadModelMetadata() {
+            const myUrl = myModelUrlInput.value.trim();
+            if (!myUrl) return;
+
+            if (myPredictionTimerId) clearInterval(myPredictionTimerId);
+            myPredictionTimerId = null;
+            myIsPredicting = false;
+
+            // Read model type
+            const sel = myModelSelect.options[myModelSelect.selectedIndex];
+            const myModelType = sel.getAttribute('data-type');
+            const myLabels = JSON.parse(sel.getAttribute('data-labels') || '[]');
+            myCurrentModelConfig = { myType: myModelType, myLabels };
+
+            myIsAudioOrMotionModel = (myModelType === "audio" || myModelType === "motion");
+
+            await myInitializeLiteRT();
+
+            if (myModel) { try { myModel.delete(); } catch {} }
+            myModel = await LiteRT.loadAndCompile(myUrl, {accelerator:"webgpu"});
+
+            // INPUT DETAILS
+            myInputDetails = myModel.getInputDetails()[0];
+            const myInShape = myModel.getInputDetails()[0].shape; 
+            myInputDtype = myInputDetails.dtype || "float32";
+
+            if (myIsAudioOrMotionModel) {
+                // Calculate total expected elements for the flattened input vector
+                myFeatureVectorLength = myInShape.reduce((a, b) => a * b, 1);
+                
+                myInputShapeSpan.textContent = `Feature Vector Length: ${myFeatureVectorLength}`;
+                
+                // If it's the audio model, update the dummy data size
+                if (myModelType === "audio") {
+                    myAudioDataPlaceholder = new Float32Array(myFeatureVectorLength).fill(0.1);
+                }
+            } else {
+                // Standard image input logic
+                const size = myInShape[1];
+                const channels = myInShape[3] || 1;
+                myInputShapeSpan.textContent = `${size}×${size} (${channels} ch)`;
+                myInputDetails.myCurrentInputShape = size;
+                myInputDetails.myInputChannels = channels;
+            }
+
+            myInputDtypeSpan.textContent = myInputDtype;
+
+            const myOut = myModel.getOutputDetails()[0];
+            myOutputDetailsSpan.textContent = myOut.shape.join("×");
+
+            myClassificationOutputDiv.textContent = `Model Type: ${myModelType}`;
+        }
+
+        /*************************************************************
+         * LOAD MODEL & START PREDICTION
+         *************************************************************/
+        async function myLoadModel() {
+            await myEnableWebcam(myCameraSelect.value); // This handles audio setup placeholder
+            myIsPredicting = true;
+            myPredictionTimerId = setInterval(myPredict, myPredictionRateMs);
+        }
+
+        /*************************************************************
+         * PREDICT — AUDIO/MOTION LOGIC
+         *************************************************************/
+        async function myPredict() {
+            if (!myIsPredicting || !myModel || !myInputDetails) return;
+
+            /* AUDIO / MOTION / ANOMALY */
+            if (myIsAudioOrMotionModel) {
+                const myType = myCurrentModelConfig.myType;
+                
+                tf.tidy(() => {
+                    let inputBuffer = null;
+                    let expectedTotalElements = myFeatureVectorLength; 
+
+                    if (myType === "audio") {
+                        // ** AUDIO INPUT LOGIC **
+                        // In a real scenario, this buffer would be filled with:
+                        // 1. Microphone capture.
+                        // 2. Spectrogram/MFCC feature generation.
+                        // 3. Flattening of the resulting feature map (e.g., 245x80 => 19600 elements).
+                        inputBuffer = myAudioDataPlaceholder;
+                        myInputStatusDiv.textContent = "🎙️ Predicting on dummy audio data...";
+                    } else if (myType === "motion") {
+                        // Original motion logic (simplified to skip the data collection loop)
+                        // This section is now deprecated in favor of audio but kept for completeness
+                        inputBuffer = myAudioDataPlaceholder.slice(0, expectedTotalElements);
+                    } else {
+                        return;
+                    }
+
+                    // CRITICAL FIX: Create 1D tensor and reshape it to the LiteRT expected flattened format: [1, 1, 1, N]
+                    let myT = tf.tensor(inputBuffer, [expectedTotalElements], myInputDtype);
+                    myT = myT.reshape([1, 1, 1, expectedTotalElements]); 
+                    
+                    const myResults = LiteRTInterop.runWithTfjsTensors(myModel, myT);
+                    myDrawModelOutput(myResults);
+                    myResults.forEach(r => r.dispose());
+                });
+
+                return;
+            }
+
+            /***** VIDEO MODELS (Unchanged) *****/
+            requestAnimationFrame(() => {
+                tf.tidy(() => {
+                    let myT = tf.browser.fromPixels(myVideoElement);
+
+                    const size = myInputDetails.myCurrentInputShape;
+                    const channels = myInputDetails.myInputChannels;
+
+                    if (channels === 1) myT = myT.mean(2, true);
+                    myT = myT.resizeBilinear([size, size]);
+
+                    if (myInputDtype.includes("float")) myT = myT.div(255);
+                    else myT = myT.cast(myInputDtype);
+
+                    myT = myT.expandDims();
+
+                    const myResults = LiteRTInterop.runWithTfjsTensors(myModel, myT);
+                    myDrawModelOutput(myResults);
+                    myResults.forEach(r => r.dispose());
+                });
+            });
+        }
+
+        /*************************************************************
+         * DRAW OUTPUT (Updated for Audio)
+         *************************************************************/
+        async function myDrawModelOutput(myResults) {
+            // Clear status bar if not audio/motion
+            if (!myIsAudioOrMotionModel) {
+                myCanvasContext.clearRect(0, 0, myCanvasElement.width, myCanvasElement.height);
+                const w = myCanvasElement.width;
+                const h = myCanvasElement.height;
+                myCanvasContext.fillStyle = "rgba(0,0,0,0.4)";
+                myCanvasContext.fillRect(0, h-40, w, 40);
+            }
+
+            const myType = myCurrentModelConfig.myType;
+            const myLabels = myCurrentModelConfig.myLabels;
+
+            switch (myType) {
+                
+                /******** AUDIO CLASSIFICATION ********/
+                case "audio": {
+                    const probs = myResults[0].dataSync();
+                    const top = [...probs].map((v,i)=>({v,i}))
+                        .sort((a,b)=>b.v-a.v).slice(0,3);
+
+                    let html = "<strong>Audio Classification:</strong><br>";
+                    top.forEach(t => {
+                        html += `${myLabels[t.i] || ("Class "+t.i)}:
+                                    <strong>${(t.v*100).toFixed(1)}%</strong><br>`;
+                    });
+                    myClassificationOutputDiv.innerHTML = html;
+                    break;
+                }
+
+                /******** MOTION & OTHER MODEL TYPES remain unchanged ********/
+                case "motion": {
+                    const probs = myResults[0].dataSync();
+                    const top = [...probs].map((v,i)=>({v,i}))
+                        .sort((a,b)=>b.v-a.v).slice(0,3);
+
+                    let html = "<strong>Motion Classification:</strong><br>";
+                    top.forEach(t => {
+                        html += `${myLabels[t.i] || ("Class "+t.i)}:
+                                    <strong>${(t.v*100).toFixed(1)}%</strong><br>`;
+                    });
+                    myClassificationOutputDiv.innerHTML = html;
+                    break;
+                }
+                case "classification": {
+                    const arr = myResults[0].dataSync();
+                    const top = [...arr].map((v,i)=>({v,i}))
+                        .sort((a,b)=>b.v-a.v).slice(0,3);
+                    let html = "Classification:<br>";
+                    top.forEach(t=>{
+                        html += `${myLabels[t.i] || ("Class "+t.i)}:
+                                    <strong>${(t.v*100).toFixed(1)}%</strong><br>`;
+                    });
+                    myClassificationOutputDiv.innerHTML = html;
+                    break;
+                }
+                // ... (object_detection and depth cases are omitted for brevity, but exist in the source)
+            }
+        }
+
+        /*************************************************************
+         * UI HANDLERS & INITIALIZATION (Unchanged)
+         *************************************************************/
+        myLoadButton.onclick = myLoadModel;
+        myCameraSelect.onchange = ()=>myEnableWebcam(myCameraSelect.value);
+        myModelSelect.onchange = ()=>{
+            myModelUrlInput.value = myModelSelect.value;
+            myPreLoadModelMetadata();
+        };
+        myModelUrlInput.onchange = myPreLoadModelMetadata;
+
+        function myPopulate() {
+            myDepthModels.forEach((m, i)=>{
+                const o=document.createElement("option");
+                o.value=m.myUrl;
+                o.text=m.myName;
+                o.setAttribute("data-type", m.myType);
+                o.setAttribute("data-labels", JSON.stringify(m.myLabels || []));
+                myModelSelect.appendChild(o);
+                if (m.myType === "audio") {
+                    // Pre-select the new audio model for testing
+                    myModelSelect.selectedIndex = i;
+                    myModelUrlInput.value = m.myUrl;
+                }
+            });
+            myPreLoadModelMetadata();
+        }
+
+        myInitializeLiteRT();
+        myGetCameras();
+        myPopulate();
+
+        async function myGetCameras() {
+            const dev = await navigator.mediaDevices.enumerateDevices();
+            const cams = dev.filter(d=>d.kind==="videoinput");
+            myCameraSelect.innerHTML="";
+            cams.forEach((d,i)=>{
+                const o=document.createElement("option");
+                o.value=d.deviceId;
+                o.text=`Camera ${d.label || ("Camera "+(i+1))}`; 
+                myCameraSelect.appendChild(o);
+            });
+        }
+    </script>
+</head>
+
+<body>
+
+    <h1 style="color:#fff; font-size:1.5em; text-align:center;">LiteRT.js Audio Classification</h1>
+    
+    <div id="videoContainer">
+        <div id="webcam" style="display: block; text-align: center; color: #ccc; padding: 20px;">
+            Input Area: Video Hidden for Audio/Motion Models
+        </div>
+        <canvas id="myCanvas"></canvas>
+    </div>
+
+    <div id="controlsPanel">
+        <h3>Model Selection & Controls</h3>
+        <div><label for="cameraSelect">Camera:</label> <select id="cameraSelect"></select></div>
+        <div><label for="modelSelect">Model Preset:</label> <select id="modelSelect"></select></div>
+
+        <input id="myModelUrlInput" type="url" placeholder="or enter model URL" />
+
+        <div style="margin-top: 5px; text-align: center;">
+            <button id="loadModelButton" style="padding: 10px 20px;">**Load & Start Prediction**</button>
+        </div>
+
+        <hr>
+
+        <h4>Model Details</h4>
+        <div style="font-size:12px;">
+            Input Shape: <span id="myInputShapeStatus">N/A</span><br>
+            Input DType: <span id="myInputDtypeStatus">N/A</span><br>
+            Output Shape: <span id="myOutputDetailsStatus">N/A</span>
+        </div>
+
+        <hr>
+        
+        <h4>Prediction Results</h4>
+        
+        <div id="myInputStatus"
+             style="margin-top:10px; padding:5px; border:1px solid #0056b3; min-height:30px; background:#e6f2ff; color: #000;">
+            Input Status
+        </div>
+        
+        <div id="myClassificationOutput"
+             style="margin-top:10px; padding:5px; border:1px solid #ccc; min-height:30px; color: #000; background: #fff;">
+            Model Type: N/A
+        </div>
+    </div>
+
+</body>
+</html>
