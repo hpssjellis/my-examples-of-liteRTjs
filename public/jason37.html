@@ -306,7 +306,7 @@
                         
                         // Print all detected objects to the HTML output and draw on canvas
                         myDetections.forEach(det => {
-                            myOutputHtml += `${det.label}: **${(det.score * 100).toFixed(2)}%**<br>`;
+                          //  myOutputHtml += `${det.label}: **${(det.score * 100).toFixed(2)}%**<br>`;   // not needed since on the screen below.
 
                             const myX = (det.x / myModelDim) * myCanvasWidth;
                             const myY = (det.y / myModelDim) * myCanvasHeight;
