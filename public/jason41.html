@@ -1,0 +1,548 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0" />
+    <title>LiteRT.js Multi-Model Visualizer</title>
+
+    <script type="module">
+        import * as LiteRT from 'https://cdn.jsdelivr.net/npm/@litertjs/core@0.2.1/+esm';
+        import * as LiteRTInterop from 'https://cdn.jsdelivr.net/npm/@litertjs/tfjs-interop/+esm';
+        import 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs/dist/tf.min.js';
+        import 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgpu/dist/tf-backend-webgpu.js';
+
+        // Custom Model Definitions with myType for visualization
+        const myDepthModels = [   
+            {myName: "96 mnist (Object Detection)", myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-v1-5-0-minst-96x96-f180-object-detection-tensorflow-lite-float32-model.5.tflite', myType: "object_detection", myLabels: Array.from({length: 10}, (_, i) => `digit-${i}`)},
+            {myName: "Fomo (Object Detection)", myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-andrew-3d-printed-symbol-fomo-object-detection-tensorflow-lite-float32-model.5.tflite', myType: "object_detection", myLabels: ["1", "2"]},
+            {myName: "Depth-Anything V2 Large", myUrl: 'https://huggingface.co/qualcomm/Depth-Anything-V2/resolve/main/Depth-Anything-V2_float.tflite', myType: "depth"},
+            {myName: "fomo pen (Object Detection)", myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-fomo-pen-object-detection-tensorflow-lite-float32-model.5.tflite', myType: "object_detection", myLabels: ["pen", "other"]},
+            {myName: "Brush (Classification)", myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-jeremy-0unknown-1brush-2paint-v01-transfer-learning-tensorflow-lite-float32-model.5.tflite', myType: "classification", myLabels: ["unknown", "brush", "paint"]},
+            {myName: "Jer Cups (Object Detection)", myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-v8-1-1-jeremy-rc-car-1red-2white-cup-fomo-96x96-object-detection-tensorflow-lite-float32-model.5.tflite', myType: "object_detection", myLabels: ["car", "red-cup", "white-cup"]},
+            {myName: "Anomaly (Classification)", myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-v1-motion-anamoly-still-classifier-tensorflow-lite-float32-model.15.tflite', myType: "anomaly", myLabels: ["anomaly_score"]},
+            {myName: "Pen (Detection)", myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-v1-fomo-pen-jeremy-object-detection-tensorflow-lite-float32-model.5.tflite', myType: "object_detection", myLabels: ["pen"]},
+            {myName: "Cell Phone Motion (Motion)", myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/other/ei-w7-8-esp32-accel-words-both-better-nn-classifier-tensorflow-lite-float32-model.38.tflite', myType: "motion", myLabels: ["still", "moving", "waving"]}
+        ];
+
+        // Globals
+        let myModel;
+        let myIsPredicting = false;
+        let myInputDetails = null; // Store full input details
+        let myInputDtype = 'float32';
+        let myLiteRTInitializedPromise = null;
+        let myCurrentModelConfig = null;
+        let myPredictionTimerId = null; 
+        const myPredictionRateMs = 200; 
+
+        // Motion Globals
+        let myIsMotionOrAnomalyModel = false;
+        let myMotionData = []; // Buffer to collect X, Y, Z acceleration data
+        let myMotionListener; 
+        let myMotionSequenceLength = 0; // The 'N' in [1, N, 3] or similar
+
+        const myVideoElement = document.getElementById('webcam');
+        const myCanvasElement = document.getElementById('myCanvas');
+        const myCanvasContext = myCanvasElement.getContext('2d');
+        const myLoadButton = document.getElementById('loadModelButton');
+        const myCameraSelect = document.getElementById('cameraSelect');
+        const myModelSelect = document.getElementById('modelSelect');
+        const myModelUrlInput = document.getElementById('myModelUrlInput');
+        const myInputShapeSpan = document.getElementById('myInputShapeStatus');
+        const myInputDtypeSpan = document.getElementById('myInputDtypeStatus');
+        const myOutputDetailsSpan = document.getElementById('myOutputDetailsStatus');
+        const myClassificationOutputDiv = document.getElementById('myClassificationOutput');
+        const myMotionOutputDiv = document.getElementById('myMotionOutput');
+
+        async function myInitializeLiteRT() {
+            if (myLiteRTInitializedPromise) return myLiteRTInitializedPromise;
+
+            myLiteRTInitializedPromise = (async () => {
+                try { await tf.setBackend('webgpu'); }
+                catch { try { await tf.setBackend('webgl'); }
+                catch { await tf.setBackend('cpu'); }}
+
+                await LiteRT.loadLiteRt('https://cdn.jsdelivr.net/npm/@litertjs/core@0.2.1/wasm/');
+                LiteRT.setWebGpuDevice(tf.backend().device);
+            })();
+
+            return myLiteRTInitializedPromise;
+        }
+
+        async function myEnableWebcam(myId) {
+            if (myIsMotionOrAnomalyModel) {
+                if (myVideoElement.srcObject) {
+                    myVideoElement.srcObject.getTracks().forEach(t => t.stop());
+                    myVideoElement.srcObject = null;
+                }
+                myVideoElement.style.display = 'none';
+                myCanvasElement.style.display = 'none';
+                return;
+            }
+
+            myVideoElement.style.display = 'block';
+            myCanvasElement.style.display = 'block';
+
+            if (myVideoElement.srcObject) {
+                myVideoElement.srcObject.getTracks().forEach(t => t.stop());
+                myVideoElement.srcObject = null;
+            }
+
+            const myCfg = {video: {deviceId: myId ? {exact: myId} : undefined}};
+            const myStream = await navigator.mediaDevices.getUserMedia(myCfg);
+            myVideoElement.srcObject = myStream;
+            await new Promise(r => myVideoElement.onloadedmetadata = r);
+            myVideoElement.play();
+            
+            myCanvasElement.width = myVideoElement.videoWidth;
+            myCanvasElement.height = myVideoElement.videoHeight;
+            myCanvasElement.style.width = myVideoElement.offsetWidth + 'px';
+            myCanvasElement.style.height = myVideoElement.offsetHeight + 'px';
+        }
+
+        // Motion Sensor Logic (collecting data)
+        function myStartMotionListener() {
+            myMotionData = []; // Clear buffer
+            
+            myMotionListener = (event) => {
+                // ⭐ CRITICAL CHANGE: Use accelerationIncludingGravity for raw data as suggested by user's past code
+                const acc = event.accelerationIncludingGravity; 
+                
+                if (acc && myIsMotionOrAnomalyModel) {
+                    let { x, y, z } = acc;
+
+                    // ⭐ NEW: Apply Android orientation correction
+                    if ( /Android/i.test(navigator.userAgent) ) {
+                        x *= -1;
+                        y *= -1;
+                        z *= -1;
+                    }
+
+                    // Collect corrected X, Y, Z data in a flat array
+                    myMotionData.push(x || 0, y || 0, z || 0);
+                    
+                    // Simple buffer management to prevent infinite growth
+                    const maxLen = myMotionSequenceLength * 3 * 2; // Buffer up to 2 sequences
+                    if (myMotionData.length > maxLen) {
+                        myMotionData = myMotionData.slice(myMotionData.length - maxLen);
+                    }
+                    
+                    // Display real-time status in the listener (fast feedback)
+                    const currentOutput = myMotionOutputDiv.innerHTML;
+                    if (!currentOutput.startsWith("Motion Classification Results") && !currentOutput.startsWith("Anomaly Score")) {
+                        myMotionOutputDiv.innerHTML = `
+                            Collecting Motion Data: X=${(x || 0).toFixed(2)}, Y=${(y || 0).toFixed(2)}, Z=${(z || 0).toFixed(2)} 
+                            (Buffer: ${Math.floor(myMotionData.length/3)} pts / Required: ${myMotionSequenceLength} pts)
+                        `;
+                    }
+                }
+            };
+
+            // Request permission for iOS 13+ devices
+            if (typeof DeviceMotionEvent.requestPermission === 'function') {
+                DeviceMotionEvent.requestPermission()
+                    .then(permissionState => {
+                        if (permissionState === 'granted') {
+                            window.addEventListener('devicemotion', myMotionListener);
+                        } else {
+                            myMotionOutputDiv.textContent = 'Motion Sensor permission denied.';
+                        }
+                    })
+                    .catch(e => myMotionOutputDiv.textContent = `Error enabling motion: ${e.message}`);
+            } else {
+                // For Android and older iOS 
+                window.addEventListener('devicemotion', myMotionListener);
+            }
+
+            // Set initial status when listener starts
+            myMotionOutputDiv.innerHTML = `
+                Collecting Motion Data... (Required: **${myMotionSequenceLength} points**)
+            `;
+            myClassificationOutputDiv.textContent = 'Motion/Anomaly model active.';
+        }
+
+        function myStopMotionListener() {
+            if (myMotionListener) {
+                window.removeEventListener('devicemotion', myMotionListener);
+            }
+            myMotionData = [];
+        }
+
+        async function myGetCameras() {
+            const myDevices = await navigator.mediaDevices.enumerateDevices();
+            const myList = myDevices.filter(d => d.kind === "videoinput");
+            myCameraSelect.innerHTML = "";
+            myList.forEach((d,i)=>{
+                const o=document.createElement("option");
+                o.value=d.deviceId;
+                o.text=`Camera ${i+1}`;
+                myCameraSelect.appendChild(o);
+            });
+        }
+
+        async function myPreLoadModelMetadata() {
+            const myUrl = myModelUrlInput.value.trim();
+            if (!myUrl) return;
+
+            if (myPredictionTimerId) clearInterval(myPredictionTimerId);
+            myPredictionTimerId = null;
+            myIsPredicting = false;
+            myStopMotionListener();
+            myMotionOutputDiv.textContent = ''; 
+
+            const mySelectedOption = myModelSelect.options[myModelSelect.selectedIndex];
+            const myModelType = mySelectedOption.getAttribute('data-type');
+            const myLabels = JSON.parse(mySelectedOption.getAttribute('data-labels') || '[]');
+            myCurrentModelConfig = { myType: myModelType, myLabels: myLabels };
+            
+            myIsMotionOrAnomalyModel = (myModelType === "motion" || myModelType === "anomaly");
+
+            await myInitializeLiteRT();
+
+            if (myModel) { try { myModel.delete(); } catch {} }
+            myModel = await LiteRT.loadAndCompile(myUrl, {accelerator:"webgpu"});
+
+            myInputDetails = myModel.getInputDetails()[0];
+            const myInShape = myInputDetails.shape;
+            myInputDtype = myInputDetails.dtype || "float32";
+
+            if (myIsMotionOrAnomalyModel) {
+                myMotionSequenceLength = myInShape[1];
+                myInputShapeSpan.textContent = `IMU: [${myInShape.join("×")}]`;
+                myInputDetails.myCurrentInputShape = 0; 
+                myInputDetails.myInputChannels = 0;
+            } else {
+                myInputDetails.myCurrentInputShape = myInShape[1];
+                myInputDetails.myInputChannels = myInShape[3] || 1;
+                myInputShapeSpan.textContent = `${myInShape[1]}×${myInShape[2]} (${myInShape[3] || 1} ch)`;
+            }
+
+            myInputDtypeSpan.textContent = myInputDtype;
+
+            const myOut = myModel.getOutputDetails()[0];
+            myOutputDetailsSpan.textContent = myOut.shape.join("×");
+            
+            myClassificationOutputDiv.textContent = `Model Type: ${myModelType}`;
+        }
+
+        async function myLoadModel() {
+            if (myIsMotionOrAnomalyModel) {
+                myStartMotionListener(); 
+            }
+            
+            await myEnableWebcam(myCameraSelect.value); 
+            
+            myIsPredicting = true;
+            myPredictionTimerId = setInterval(myPredict, myPredictionRateMs);
+        }
+        
+        // --- Visualization Functions ---
+
+        async function myDrawModelOutput(myResults) {
+            if (!myIsMotionOrAnomalyModel) {
+                myCanvasContext.clearRect(0, 0, myCanvasElement.width, myCanvasElement.height);
+                const myCanvasWidth = myCanvasElement.width;
+                const myCanvasHeight = myCanvasElement.height;
+                myCanvasContext.fillStyle = 'rgba(0, 0, 0, 0.4)';
+                myCanvasContext.fillRect(0, myCanvasHeight - 40, myCanvasWidth, 40);
+            }
+            
+            myClassificationOutputDiv.textContent = "";
+
+            if (!myCurrentModelConfig) return;
+            
+            const myType = myCurrentModelConfig.myType;
+            const myLabels = myCurrentModelConfig.myLabels;
+            
+            switch (myType) {
+                case "motion": {
+                    const myProbabilities = myResults[0].dataSync();
+                    const myTopK = Array.from(myProbabilities)
+                        .map((myScore, myIndex) => ({ myScore, myIndex }))
+                        .sort((a, b) => b.myScore - a.myScore)
+                        .slice(0, 3);
+
+                    let myOutputHtml = 'Motion Classification Results:<br>';
+                    myTopK.forEach(myRes => {
+                        const myLabel = myLabels[myRes.myIndex] || `Class ${myRes.myIndex}`;
+                        myOutputHtml += `${myLabel}: **${(myRes.myScore * 100).toFixed(2)}%**<br>`;
+                    });
+
+                    myMotionOutputDiv.innerHTML = myOutputHtml;
+                    break;
+                }
+                case "object_detection": {
+                    const myFomoOutput = myResults[0].dataSync();
+                    const myModelDim = myResults[0].shape[1];
+                    const myNumClasses = myResults[0].shape[3] - 1;
+                    const myThreshold = 0.5;
+                    
+                    let myDetections = [];
+                    
+                    for(let i = 0; i < myFomoOutput.length; i += myNumClasses + 1) {
+                        for(let c = 0; c < myNumClasses; c++) {
+                            const myScore = myFomoOutput[i + c + 1]; 
+                            
+                            if (myScore > myThreshold) {
+                                const cellIndex = Math.floor(i / (myNumClasses + 1));
+                                const myCellX = cellIndex % myModelDim;
+                                const myCellY = Math.floor(cellIndex / myModelDim);
+                                const myClassId = c; 
+                                const myLabel = myLabels[myClassId] || `Class ${myClassId}`;
+
+                                myDetections.push({ 
+                                    score: myScore, 
+                                    label: myLabel,
+                                    x: myCellX,
+                                    y: myCellY
+                                });
+                            }
+                        }
+                    }
+
+                    myCanvasContext.clearRect(0, 0, myCanvasElement.width, myCanvasElement.height);
+                    let myOutputHtml = `Object Detections (Threshold: ${myThreshold * 100}%):<br>`;
+
+                    if (myDetections.length === 0) {
+                        myOutputHtml += "No objects detected.<br>";
+                    } else {
+                        const myCanvasWidth = myCanvasElement.width;
+                        const myCanvasHeight = myCanvasElement.height;
+                        const myBoxSize = 30;
+                        
+                        myDetections.forEach(det => {
+                            myOutputHtml += `${det.label}: **${(det.score * 100).toFixed(2)}%**<br>`;
+
+                            const myX = (det.x / myModelDim) * myCanvasWidth;
+                            const myY = (det.y / myModelDim) * myCanvasHeight;
+
+                            myCanvasContext.strokeStyle = 'red';
+                            myCanvasContext.lineWidth = 3;
+                            myCanvasContext.strokeRect(myX - myBoxSize/2, myY - myBoxSize/2, myBoxSize, myBoxSize);
+
+                            myCanvasContext.font = '16px sans-serif';
+                            myCanvasContext.fillStyle = 'red';
+                            myCanvasContext.fillText(det.label, myX - myBoxSize/2, myY - myBoxSize/2 - 5);
+                        });
+                    }
+
+                    myClassificationOutputDiv.innerHTML = myOutputHtml;
+                    
+                    break;
+                }
+                case "classification": {
+                    const myProbabilities_C = myResults[0].dataSync();
+                    const myTopK_C = Array.from(myProbabilities_C)
+                        .map((myScore, myIndex) => ({ myScore, myIndex }))
+                        .sort((a, b) => b.myScore - a.myScore)
+                        .slice(0, 3);
+
+                    let myOutputHtml = 'Classification Results:<br>';
+                    myTopK_C.forEach(myRes => {
+                        const myLabel = myLabels[myRes.myIndex] || `Class ${myRes.myIndex}`;
+                        myOutputHtml += `${myLabel}: **${(myRes.myScore * 100).toFixed(2)}%**<br>`;
+                    });
+                    
+                    myClassificationOutputDiv.innerHTML = myOutputHtml;
+                    
+                    break;
+                }
+                case "anomaly": {
+                    const myProbabilities_C = myResults[0].dataSync();
+                    const myAnomalyPercentage = myProbabilities_C[myProbabilities_C.length - 1] * 100;
+
+                    let myOutputHtml = `Anomaly Score:<br>
+                        ${myLabels[myProbabilities_C.length - 1] || 'Anomaly'}: **${myAnomalyPercentage.toFixed(2)}%**<br>`;
+                    
+                    if (myAnomalyPercentage > 50) {
+                        myOutputHtml += "<span style='color:red;'>ANOMALY DETECTED!</span>";
+                    } else {
+                        myOutputHtml += "<span style='color:green;'>Normal Activity.</span>";
+                    }
+
+                    myMotionOutputDiv.innerHTML = myOutputHtml;
+                    
+                    break;
+                }
+                case "depth":
+                    const myDepthMap = myResults[0];
+                    const myDepthTensor = myDepthMap.squeeze();
+                    
+                    tf.tidy(() => {
+                        const myMin = myDepthTensor.min();
+                        const myMax = myDepthTensor.max();
+                        const myNormalizedDepth = myDepthTensor.sub(myMin).div(myMax.sub(myMin)).mul(255).toInt();
+                        
+                        const myDepthArray = myNormalizedDepth.dataSync();
+                        const myHeight = myDepthTensor.shape[0];
+                        const myWidth = myDepthTensor.shape[1];
+                        const myImageData = myCanvasContext.createImageData(myWidth, myHeight);
+                        
+                        for (let i = 0; i < myDepthArray.length; i++) {
+                            const myGreyValue = myDepthArray[i];
+                            myImageData.data[i * 4 + 0] = myGreyValue; // R
+                            myImageData.data[i * 4 + 1] = myGreyValue; // G
+                            myImageData.data[i * 4 + 2] = myGreyValue; // B
+                            myImageData.data[i * 4 + 3] = 255; // A
+                        }
+
+                        const myTempCanvas = document.createElement('canvas');
+                        myTempCanvas.width = myWidth;
+                        myTempCanvas.height = myHeight;
+                        myTempCanvas.getContext('2d').putImageData(myImageData, 0, 0);
+                        
+                        myCanvasContext.drawImage(myTempCanvas, 0, 0, myCanvasElement.width, myCanvasElement.height);
+                        
+                        myCanvasContext.fillStyle = 'rgba(255, 255, 255, 0.4)'; 
+                        myCanvasContext.fillRect(0, 0, myCanvasElement.width, myCanvasElement.height);
+                    });
+                    
+                    break;
+                    
+                default:
+                    myClassificationOutputDiv.textContent = `Unsupported Model Type: ${myType}`;
+            }
+        }
+
+        // --- Prediction Loop ---
+        
+        async function myPredict() {
+            if (!myIsPredicting || !myModel || !myInputDetails) return;
+
+            if (myIsMotionOrAnomalyModel) {
+                const isAnomalyModel = myCurrentModelConfig.myType === "anomaly";
+                
+                tf.tidy(() => {
+                    let inputBuffer;
+                    let tensorShape;
+                    let dataNeeded = myMotionSequenceLength;
+                    let dataAvailable = Math.floor(myMotionData.length / 3);
+                    
+                    if (isAnomalyModel) {
+                         if (dataAvailable >= dataNeeded) {
+                             const xData = myMotionData.filter((_, index) => index % 3 === 0);
+                             inputBuffer = xData.slice(0, dataNeeded);
+                             myMotionData = myMotionData.slice(dataNeeded * 3);
+                             tensorShape = [1, dataNeeded, 1];
+                         }
+                    } else { 
+                        if (myMotionData.length >= dataNeeded * 3) {
+                            inputBuffer = myMotionData.slice(0, dataNeeded * 3);
+                            myMotionData = myMotionData.slice(dataNeeded * 3); 
+                            tensorShape = [1, dataNeeded, 3];
+                        }
+                    }
+
+                    if (inputBuffer) {
+                        const myT = tf.tensor(inputBuffer, tensorShape, myInputDtype);
+                        
+                        const myResults = LiteRTInterop.runWithTfjsTensors(myModel, myT);
+                        myDrawModelOutput(myResults);
+                        myResults.forEach(r => r.dispose());
+                    } else {
+                         myMotionOutputDiv.innerHTML = `
+                            Collecting Motion Data... (Need **${dataNeeded} points**, Have **${dataAvailable} points**)
+                        `;
+                    }
+                });
+            } else {
+                // Video Model Inference
+                requestAnimationFrame(() => {
+                    tf.tidy(() => {
+                        let myT = tf.browser.fromPixels(myVideoElement);
+                        
+                        const myCurrentInputShape = myInputDetails.myCurrentInputShape;
+                        const myInputChannels = myInputDetails.myInputChannels;
+
+                        if (myInputChannels === 1) myT = myT.mean(2, true);
+                        myT = myT.resizeBilinear([myCurrentInputShape, myCurrentInputShape]);
+
+                        if (myInputDtype.startsWith("float")) myT = myT.div(255);
+                        else myT = myT.cast(myInputDtype);
+
+                        myT = myT.expandDims();
+
+                        const myResults = LiteRTInterop.runWithTfjsTensors(myModel, myT);
+
+                        myDrawModelOutput(myResults);
+                        
+                        myResults.forEach(r => r.dispose());
+                    });
+                });
+            }
+        }
+
+        // Use static links to functions
+        myLoadButton.onclick = myLoadModel;
+        myCameraSelect.onchange = ()=>myEnableWebcam(myCameraSelect.value);
+        myModelSelect.onchange = ()=>{
+            myModelUrlInput.value = myModelSelect.value;
+            myPreLoadModelMetadata();
+        };
+        myModelUrlInput.onchange = myPreLoadModelMetadata;
+
+        myPopulate();
+        function myPopulate() {
+            myDepthModels.forEach(m=>{
+                const o=document.createElement("option");
+                o.value=m.myUrl;
+                o.text=m.myName;
+                o.setAttribute('data-type', m.myType); 
+                o.setAttribute('data-labels', JSON.stringify(m.myLabels || []));
+                myModelSelect.appendChild(o);
+            });
+            myModelUrlInput.value = myDepthModels[0].myUrl;
+            myPreLoadModelMetadata();
+        }
+
+        myInitializeLiteRT();
+        myGetCameras();
+        myEnableWebcam();
+    </script>
+</head>
+
+<body style="margin:0; padding:10px; background:#000; color:#fff; font-family:sans-serif;">
+
+    <div style="position:relative; width:300px; height:auto; margin-bottom:10px;">
+        <video id="webcam" autoplay playsinline style="width:100%; height:100%;"></video>
+        <canvas id="myCanvas" style="position:absolute; top:0; left:0;"></canvas>
+    </div>
+
+    <div style="background:#fff; color:#000; padding:10px; border-radius:8px;">
+        
+        <div>
+            Camera:
+            <select id="cameraSelect"></select>
+        </div>
+
+        <div>
+            Model Preset:
+            <select id="modelSelect"></select>
+        </div>
+
+        <input type="text" id="myModelUrlInput" style="width:95%; padding:5px;" />
+
+        <div style="margin-top: 5px;">
+            <button id="loadModelButton">Load & Start</button>
+            <span style="font-size:12px; margin-left: 10px;">
+                *If error, **refresh the page**.*
+            </span>
+        </div>
+
+        <hr style="border-top: 1px solid #ccc; margin: 10px 0;">
+
+        <div style="font-size:12px;">
+            Input: <span id="myInputShapeStatus">N/A</span><br>
+            DType: <span id="myInputDtypeStatus">N/A</span><br>
+            Output: <span id="myOutputDetailsStatus">N/A</span>
+        </div>
+        
+        <div id="myMotionOutput" style="margin-top:10px; padding:5px; border:1px solid #c9f; min-height:30px; background:#f0f0ff;">
+            Motion/Anomaly Status
+        </div>
+        
+        <div id="myClassificationOutput" style="margin-top:10px; padding:5px; border:1px solid #ccc; min-height:30px;">
+            Model Type: N/A
+        </div>
+    </div>
+</body>
+</html>
