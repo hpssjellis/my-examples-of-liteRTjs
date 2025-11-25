@@ -1,0 +1,374 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, user-scalable=no, minimum-scale=1.0, maximum-scale=1.0" />
+    <title>LiteRT.js Multi-Model Visualizer</title>
+
+    <script type="module">
+        import * as LiteRT from 'https://cdn.jsdelivr.net/npm/@litertjs/core@0.2.1/+esm';
+        import * as LiteRTInterop from 'https://cdn.jsdelivr.net/npm/@litertjs/tfjs-interop/+esm';
+        import 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs/dist/tf.min.js';
+        import 'https://cdn.jsdelivr.net/npm/@tensorflow/tfjs-backend-webgpu/dist/tf-backend-webgpu.js';
+
+        // Custom Model Definitions with myType for visualization
+        const myDepthModels = [
+            {myName: "Depth-Anything V2 Large", myUrl: 'https://huggingface.co/qualcomm/Depth-Anything-V2/resolve/main/Depth-Anything-V2_float.tflite', myType: "depth"},
+            {myName: "Fomo (Object Detection)", myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-andrew-3d-printed-symbol-fomo-object-detection-tensorflow-lite-float32-model.5.tflite', myType: "object_detection", myLabels: ["label1", "label2"]},
+            {myName: "fomo pen (Object Detection)", myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-fomo-pen-object-detection-tensorflow-lite-float32-model.5.tflite', myType: "object_detection", myLabels: ["pen", "other"]},
+            {myName: "Brush (Classification)", myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-jeremy-0unknown-1brush-2paint-v01-transfer-learning-tensorflow-lite-float32-model.5.tflite', myType: "classification", myLabels: ["unknown", "brush", "paint"]},
+            {myName: "96 mnist (Detection)", myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-v1-5-0-minst-96x96-f180-object-detection-tensorflow-lite-float32-model.5.tflite', myType: "object_detection", myLabels: Array.from({length: 10}, (_, i) => `digit-${i}`)},
+            {myName: "Jer Cups (Detection)", myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-v8-1-1-jeremy-rc-car-1red-2white-cup-fomo-96x96-object-detection-tensorflow-lite-float32-model.5.tflite', myType: "object_detection", myLabels: ["car", "red-cup", "white-cup"]},
+            {myName: "Anomaly (Classification)", myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-v1-motion-anamoly-still-classifier-tensorflow-lite-float32-model.15.tflite', myType: "anomaly"},
+            {myName: "Pen (Detection)", myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-v1-fomo-pen-jeremy-object-detection-tensorflow-lite-float32-model.5.tflite', myType: "object_detection", myLabels: ["pen"]}
+        ];
+
+        // Globals
+        let myModel;
+        let myIsPredicting = false;
+        let myCurrentInputShape = 0;
+        let myInputChannels = 3;
+        let myInputDtype = 'float32';
+        let myLiteRTInitializedPromise = null;
+        let myCurrentModelConfig = null;
+        let myPredictionTimerId = null; // ⭐ NEW: Timer ID for controlling prediction rate
+        const myPredictionRateMs = 200; // ⭐ NEW: Predict every 200ms (5 FPS)
+
+        const myVideoElement = document.getElementById('webcam');
+        const myCanvasElement = document.getElementById('myCanvas');
+        const myCanvasContext = myCanvasElement.getContext('2d');
+        const myLoadButton = document.getElementById('loadModelButton');
+        const myResetButton = document.getElementById('myResetButton');
+        const myCameraSelect = document.getElementById('cameraSelect');
+        const myModelSelect = document.getElementById('modelSelect');
+        const myModelUrlInput = document.getElementById('myModelUrlInput');
+        const myInputShapeSpan = document.getElementById('myInputShapeStatus');
+        const myInputDtypeSpan = document.getElementById('myInputDtypeStatus');
+        const myOutputDetailsSpan = document.getElementById('myOutputDetailsStatus');
+        const myClassificationOutputDiv = document.getElementById('myClassificationOutput');
+
+        async function myInitializeLiteRT() {
+            if (myLiteRTInitializedPromise) return myLiteRTInitializedPromise;
+
+            myLiteRTInitializedPromise = (async () => {
+                try { await tf.setBackend('webgpu'); }
+                catch { try { await tf.setBackend('webgl'); }
+                catch { await tf.setBackend('cpu'); }}
+
+                await LiteRT.loadLiteRt('https://cdn.jsdelivr.net/npm/@litertjs/core@0.2.1/wasm/');
+                LiteRT.setWebGpuDevice(tf.backend().device);
+            })();
+
+            return myLiteRTInitializedPromise;
+        }
+
+        async function myEnableWebcam(myId) {
+            if (myVideoElement.srcObject) {
+                myVideoElement.srcObject.getTracks().forEach(t => t.stop());
+                myVideoElement.srcObject = null;
+            }
+            const myCfg = {video: {deviceId: myId ? {exact: myId} : undefined}};
+            const myStream = await navigator.mediaDevices.getUserMedia(myCfg);
+            myVideoElement.srcObject = myStream;
+            await new Promise(r => myVideoElement.onloadedmetadata = r);
+            myVideoElement.play();
+            
+            // Set canvas size to match video
+            myCanvasElement.width = myVideoElement.videoWidth;
+            myCanvasElement.height = myVideoElement.videoHeight;
+            myCanvasElement.style.width = myVideoElement.offsetWidth + 'px';
+            myCanvasElement.style.height = myVideoElement.offsetHeight + 'px';
+        }
+
+        async function myGetCameras() {
+            const myDevices = await navigator.mediaDevices.enumerateDevices();
+            const myList = myDevices.filter(d => d.kind === "videoinput");
+            myCameraSelect.innerHTML = "";
+            myList.forEach((d,i)=>{
+                const o=document.createElement("option");
+                o.value=d.deviceId;
+                o.text=`Camera ${i+1}`;
+                myCameraSelect.appendChild(o);
+            });
+        }
+
+        async function myPreLoadModelMetadata() {
+            const myUrl = myModelUrlInput.value.trim();
+            if (!myUrl) return;
+
+            const mySelectedOption = myModelSelect.options[myModelSelect.selectedIndex];
+            const myModelType = mySelectedOption.getAttribute('data-type');
+            const myLabels = JSON.parse(mySelectedOption.getAttribute('data-labels') || '[]');
+            myCurrentModelConfig = { myType: myModelType, myLabels: myLabels };
+
+            await myInitializeLiteRT();
+
+            if (myModel) { try { myModel.delete(); } catch {} }
+            myModel = await LiteRT.loadAndCompile(myUrl, {accelerator:"webgpu"});
+
+            const myIn = myModel.getInputDetails()[0];
+            myCurrentInputShape = myIn.shape[1];
+            myInputChannels = myIn.shape[3] || 1;
+            myInputDtype = myIn.dtype || "float32";
+
+            myInputShapeSpan.textContent = `${myCurrentInputShape}×${myCurrentInputShape} (${myInputChannels} ch)`;
+            myInputDtypeSpan.textContent = myInputDtype;
+
+            const myOut = myModel.getOutputDetails()[0];
+            myOutputDetailsSpan.textContent = myOut.shape.join("×");
+            
+            myClassificationOutputDiv.textContent = `Model Type: ${myModelType}`;
+        }
+
+        async function myLoadModel() {
+            await myEnableWebcam(myCameraSelect.value);
+            myIsPredicting = true;
+            // ⭐ NEW: Start the prediction loop on a timer
+            myPredictionTimerId = setInterval(myPredict, myPredictionRateMs);
+        }
+        
+        // --- Visualization Functions (kept separate for clarity) ---
+
+        async function myDrawModelOutput(myResults) {
+            myCanvasContext.clearRect(0, 0, myCanvasElement.width, myCanvasElement.height);
+            myClassificationOutputDiv.textContent = "";
+
+            if (!myCurrentModelConfig) return;
+            
+            const myType = myCurrentModelConfig.myType;
+            const myLabels = myCurrentModelConfig.myLabels;
+            const myCanvasWidth = myCanvasElement.width;
+            const myCanvasHeight = myCanvasElement.height;
+            
+            myCanvasContext.fillStyle = 'rgba(0, 0, 0, 0.4)';
+            myCanvasContext.fillRect(0, myCanvasHeight - 40, myCanvasWidth, 40);
+
+            switch (myType) {
+                case "object_detection":
+                    // Simplified drawing for a single point (Fomo)
+                    const myFomoOutput = myResults[0].dataSync();
+                    const myModelDim = myResults[0].shape[1];
+                    const myNumClasses = myResults[0].shape[3] - 1;
+
+                    let myMaxScore = 0;
+                    let myMaxIndex = -1;
+                    
+                    for(let i = 0; i < myFomoOutput.length; i += myNumClasses + 1) {
+                         for(let c = 0; c < myNumClasses; c++) {
+                            const myScore = myFomoOutput[i + c + 1];
+                            if (myScore > myMaxScore) {
+                                myMaxScore = myScore;
+                                myMaxIndex = i;
+                            }
+                         }
+                    }
+
+                    if (myMaxScore > 0.5 && myMaxIndex !== -1) {
+                        const myCellX = (myMaxIndex / (myNumClasses + 1)) % myModelDim;
+                        const myCellY = Math.floor((myMaxIndex / (myNumClasses + 1)) / myModelDim);
+                        const myClassId = Math.floor((myMaxIndex - (myCellY * myModelDim * (myNumClasses + 1)) - (myCellX * (myNumClasses + 1))) / (myNumClasses + 1));
+                        
+                        const myBoxSize = 30;
+                        const myX = (myCellX / myModelDim) * myCanvasWidth;
+                        const myY = (myCellY / myModelDim) * myCanvasHeight;
+                        const myLabel = myLabels[myClassId] || `label${myClassId}`;
+
+                        myCanvasContext.strokeStyle = 'red';
+                        myCanvasContext.lineWidth = 3;
+                        myCanvasContext.strokeRect(myX - myBoxSize/2, myY - myBoxSize/2, myBoxSize, myBoxSize);
+
+                        myCanvasContext.font = '16px sans-serif';
+                        myCanvasContext.fillStyle = 'red';
+                        myCanvasContext.fillText(`${myLabel} (${(myMaxScore*100).toFixed(1)}%)`, myX - myBoxSize/2, myY - myBoxSize/2 - 5);
+                    }
+                    
+                    break;
+
+                case "classification":
+                    const myProbabilities = myResults[0].dataSync();
+                    const myTopK = Array.from(myProbabilities)
+                        .map((myScore, myIndex) => ({ myScore, myIndex }))
+                        .sort((a, b) => b.myScore - a.myScore)
+                        .slice(0, 3);
+
+                    let myOutputHtml = 'Classification Results:<br>';
+                    myTopK.forEach(myRes => {
+                        const myLabel = myLabels[myRes.myIndex] || `Class ${myRes.myIndex}`;
+                        myOutputHtml += `${myLabel}: **${(myRes.myScore * 100).toFixed(2)}%**<br>`;
+                    });
+                    myClassificationOutputDiv.innerHTML = myOutputHtml;
+                    
+                    break;
+
+                case "depth":
+                    const myDepthMap = myResults[0];
+                    const myDepthTensor = myDepthMap.squeeze();
+
+                    const myMin = myDepthTensor.min();
+                    const myMax = myDepthTensor.max();
+                    const myNormalizedDepth = myDepthTensor.sub(myMin).div(myMax.sub(myMin)).mul(255).toInt();
+                    
+                    const myDepthArray = myNormalizedDepth.dataSync();
+                    const myHeight = myDepthTensor.shape[0];
+                    const myWidth = myDepthTensor.shape[1];
+                    const myImageData = myCanvasContext.createImageData(myWidth, myHeight);
+                    
+                    for (let i = 0; i < myDepthArray.length; i++) {
+                        const myGreyValue = myDepthArray[i];
+                        myImageData.data[i * 4 + 0] = myGreyValue; // R
+                        myImageData.data[i * 4 + 1] = myGreyValue; // G
+                        myImageData.data[i * 4 + 2] = myGreyValue; // B
+                        myImageData.data[i * 4 + 3] = 255; // A
+                    }
+
+                    const myTempCanvas = document.createElement('canvas');
+                    myTempCanvas.width = myWidth;
+                    myTempCanvas.height = myHeight;
+                    myTempCanvas.getContext('2d').putImageData(myImageData, 0, 0);
+                    
+                    myCanvasContext.drawImage(myTempCanvas, 0, 0, myCanvasWidth, myCanvasHeight);
+                    
+                    myCanvasContext.fillStyle = 'rgba(255, 255, 255, 0.4)'; 
+                    myCanvasContext.fillRect(0, 0, myCanvasWidth, myCanvasHeight);
+
+                    myDepthTensor.dispose();
+                    myMin.dispose();
+                    myMax.dispose();
+                    myNormalizedDepth.dispose();
+                    
+                    break;
+                    
+                case "anomaly":
+                    const myAnomalyScore = myResults[0].dataSync()[0];
+                    const myAnomalyPercentage = myAnomalyScore * 100;
+                    
+                    let myOutputText = `Anomaly Score: **${myAnomalyPercentage.toFixed(2)}%**`;
+                    
+                    myCanvasContext.font = '24px sans-serif';
+                    myCanvasContext.textAlign = 'center';
+                    
+                    if (myAnomalyPercentage > 50) {
+                        myCanvasContext.fillStyle = 'red';
+                        myOutputText += " - ANOMALY DETECTED!";
+                    } else {
+                        myCanvasContext.fillStyle = 'green';
+                    }
+                    
+                    myClassificationOutputDiv.innerHTML = myOutputText;
+
+                    myCanvasContext.fillText(myOutputText, myCanvasWidth / 2, myCanvasHeight / 2);
+                    
+                    break;
+                    
+                default:
+                    myClassificationOutputDiv.textContent = `Unsupported Model Type: ${myType}`;
+            }
+        }
+
+        // --- Prediction Loop Change ---
+        
+        // This function is now called by setInterval, not requestAnimationFrame
+        async function myPredict() {
+            if (!myIsPredicting || !myModel) return;
+
+            // Use requestAnimationFrame only to ensure the video frame is ready for processing,
+            // but don't use it for the prediction loop itself.
+            requestAnimationFrame(() => {
+                tf.tidy(() => {
+                    let myT = tf.browser.fromPixels(myVideoElement);
+
+                    if (myInputChannels === 1) myT = myT.mean(2, true);
+                    myT = myT.resizeBilinear([myCurrentInputShape, myCurrentInputShape]);
+
+                    if (myInputDtype.startsWith("float")) myT = myT.div(255);
+                    else myT = myT.cast(myInputDtype);
+
+                    myT = myT.expandDims();
+
+                    const myResults = LiteRTInterop.runWithTfjsTensors(myModel, myT);
+
+                    // Call the visualization function
+                    myDrawModelOutput(myResults);
+                    
+                    myResults.forEach(r => r.dispose());
+                });
+            });
+            // ⭐ Removed the recursive call to requestAnimationFrame(myPredict)
+        }
+
+        function myFullReset() {
+            myIsPredicting = false;
+            // ⭐ NEW: Stop the prediction timer
+            if (myPredictionTimerId) clearInterval(myPredictionTimerId); 
+            myPredictionTimerId = null;
+            
+            if (myModel) { try { myModel.delete(); } catch {} }
+            myModel = null;
+            myCurrentModelConfig = null;
+            myCanvasContext.clearRect(0, 0, myCanvasElement.width, myCanvasElement.height);
+            myClassificationOutputDiv.textContent = 'Model Reset';
+        }
+
+        // Use static links to functions
+        myLoadButton.onclick = myLoadModel;
+        myResetButton.onclick = myFullReset;
+        myCameraSelect.onchange = ()=>myEnableWebcam(myCameraSelect.value);
+        myModelSelect.onchange = ()=>{
+            myModelUrlInput.value = myModelSelect.value;
+            myPreLoadModelMetadata();
+        };
+        myModelUrlInput.onchange = myPreLoadModelMetadata;
+
+        myPopulate();
+        function myPopulate() {
+            myDepthModels.forEach(m=>{
+                const o=document.createElement("option");
+                o.value=m.myUrl;
+                o.text=m.myName;
+                o.setAttribute('data-type', m.myType); 
+                o.setAttribute('data-labels', JSON.stringify(m.myLabels || []));
+                myModelSelect.appendChild(o);
+            });
+            myModelUrlInput.value = myDepthModels[0].myUrl;
+            myPreLoadModelMetadata();
+        }
+
+        myInitializeLiteRT();
+        myGetCameras();
+        myEnableWebcam();
+    </script>
+</head>
+
+<body style="margin:0; padding:10px; background:#000; color:#fff; font-family:sans-serif;">
+    <div style="background:#fff; color:#000; padding:10px; border-radius:8px;">
+        <div>
+            Camera:
+            <select id="cameraSelect"></select>
+        </div>
+
+        <div>
+            Model Preset:
+            <select id="modelSelect"></select>
+        </div>
+
+        <input type="text" id="myModelUrlInput" style="width:95%; padding:5px;" />
+
+        <button id="loadModelButton">Load & Start</button>
+        <button id="myResetButton" style="background:#fcc;">Reset</button>
+
+        <div style="font-size:12px; margin-top:10px;">
+            Input: <span id="myInputShapeStatus">N/A</span><br>
+            DType: <span id="myInputDtypeStatus">N/A</span><br>
+            Output: <span id="myOutputDetailsStatus">N/A</span>
+        </div>
+        <div id="myClassificationOutput" style="margin-top:10px; padding:5px; border:1px solid #ccc; min-height:30px;">
+            Model Type: N/A
+        </div>
+    </div>
+    
+    <div style="position:relative; width:300px; height:auto; margin-top:10px;">
+        <video id="webcam" autoplay playsinline style="width:100%; height:100%;"></video>
+        <canvas id="myCanvas" style="position:absolute; top:0; left:0;"></canvas>
+    </div>
+</body>
+</html>
