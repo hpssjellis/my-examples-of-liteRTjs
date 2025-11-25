@@ -397,9 +397,7 @@
                         myResults.forEach(r => r.dispose());
                     } else {
                          // Keep the status updated while waiting for enough data
-                        myClassificationOutputDiv.innerHTML = `
-                            Collecting Motion Data... (Need **${myMotionSequenceLength} points**, Have **${Math.floor(myMotionData.length/3)} points**)
-                        `;
+                       // myClassificationOutputDiv.innerHTML = `Collecting Motion Data... (Need **${myMotionSequenceLength} points**, Have **${Math.floor(myMotionData.length/3)} points**)`;
                     }
                 });
             } else {
