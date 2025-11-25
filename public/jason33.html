@@ -13,16 +13,15 @@
 
         // Custom Model Definitions with myType for visualization
         const myDepthModels = [
-            {myName: "Depth-Anything V2 Large", myUrl: 'https://huggingface.co/qualcomm/Depth-Anything-V2/resolve/main/Depth-Anything-V2_float.tflite', myType: "depth"},
-            {myName: "Fomo (Object Detection)", myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-andrew-3d-printed-symbol-fomo-object-detection-tensorflow-lite-float32-model.5.tflite', myType: "object_detection", myLabels: ["label1", "label2"]},
-            {myName: "fomo pen (Object Detection)", myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-fomo-pen-object-detection-tensorflow-lite-float32-model.5.tflite', myType: "object_detection", myLabels: ["pen", "other"]},
-            {myName: "Brush (Classification)", myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-jeremy-0unknown-1brush-2paint-v01-transfer-learning-tensorflow-lite-float32-model.5.tflite', myType: "classification", myLabels: ["unknown", "brush", "paint"]},
-            {myName: "96 mnist (Object Detection)", myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-v1-5-0-minst-96x96-f180-object-detection-tensorflow-lite-float32-model.5.tflite', myType: "object_detection", myLabels: Array.from({length: 10}, (_, i) => `digit-${i}`)},
-            {myName: "Jer Cups (Object Detection)", myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-v8-1-1-jeremy-rc-car-1red-2white-cup-fomo-96x96-object-detection-tensorflow-lite-float32-model.5.tflite', myType: "object_detection", myLabels: ["car", "red-cup", "white-cup"]},
-            {myName: "Anomaly (Classification)", myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-v1-motion-anamoly-still-classifier-tensorflow-lite-float32-model.15.tflite', myType: "anomaly"},
-            {myName: "Pen (Detection)", myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-v1-fomo-pen-jeremy-object-detection-tensorflow-lite-float32-model.5.tflite', myType: "object_detection", myLabels: ["pen"]},
-            {myName: "Cell Phone Motion (Motion)", myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/other/ei-w7-8-esp32-accel-words-both-better-nn-classifier-tensorflow-lite-float32-model.38.tflite', myType: "motion", myLabels: ["still", "moving", "waving"]}
-        ];
+            {myName: "Depth-Anything V2 Large", myUrl: 'https://huggingface.co/qualcomm/Depth-Anything-V2/resolve/main/Depth-Anything-V2_float.tflite', myType: "depth"},
+            {myName: "Fomo (Object Detection)", myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-andrew-3d-printed-symbol-fomo-object-detection-tensorflow-lite-float32-model.5.tflite', myType: "object_detection", myLabels: ["label1", "label2"]},
+            {myName: "fomo pen (Object Detection)", myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-fomo-pen-object-detection-tensorflow-lite-float32-model.5.tflite', myType: "object_detection", myLabels: ["pen", "other"]},
+            {myName: "Brush (Classification)", myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-jeremy-0unknown-1brush-2paint-v01-transfer-learning-tensorflow-lite-float32-model.5.tflite', myType: "classification", myLabels: ["unknown", "brush", "paint"]},
+            {myName: "96 mnist (Object Detection)", myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-v1-5-0-minst-96x96-f180-object-detection-tensorflow-lite-float32-model.5.tflite', myType: "object_detection", myLabels: Array.from({length: 10}, (_, i) => `digit-${i}`)},
+            {myName: "Jer Cups (Object Detection)", myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-v8-1-1-jeremy-rc-car-1red-2white-cup-fomo-96x96-object-detection-tensorflow-lite-float32-model.5.tflite', myType: "object_detection", myLabels: ["car", "red-cup", "white-cup"]},
+            {myName: "Anomaly (Classification)", myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-v1-motion-anamoly-still-classifier-tensorflow-lite-float32-model.15.tflite', myType: "anomaly"},
+            {myName: "Pen (Detection)", myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/ei-ei-v1-fomo-pen-jeremy-object-detection-tensorflow-lite-float32-model.5.tflite', myType: "object_detection", myLabels: ["pen"]},
+            {myName: "Cell Phone Motion (Motion)", myUrl: 'https://hpssjellis.github.io/my-examples-of-liteRTjs/public/tflite/other/ei-w7-8-esp32-accel-words-both-better-nn-classifier-tensorflow-lite-float32-model.38.tflite', myType: "motion", myLabels: ["still", "moving", "waving"]}
         ];
 
         // Globals
@@ -33,8 +32,13 @@
         let myInputDtype = 'float32';
         let myLiteRTInitializedPromise = null;
         let myCurrentModelConfig = null;
-        let myPredictionTimerId = null; // ⭐ NEW: Timer ID for controlling prediction rate
-        const myPredictionRateMs = 200; // ⭐ NEW: Predict every 200ms (5 FPS)
+        let myPredictionTimerId = null; 
+        const myPredictionRateMs = 200; 
+
+        // ⭐ NEW: Motion Globals
+        let myIsMotionModel = false;
+        let myMotionData = []; // Buffer to collect X, Y, Z acceleration data
+        let myMotionListener; // Reference for the event listener function
 
         const myVideoElement = document.getElementById('webcam');
         const myCanvasElement = document.getElementById('myCanvas');
@@ -65,10 +69,25 @@
         }
 
         async function myEnableWebcam(myId) {
+            // Only start webcam if it's a visual model
+            if (myIsMotionModel) {
+                if (myVideoElement.srcObject) {
+                    myVideoElement.srcObject.getTracks().forEach(t => t.stop());
+                    myVideoElement.srcObject = null;
+                }
+                myVideoElement.style.display = 'none';
+                myCanvasElement.style.display = 'none';
+                return;
+            }
+
+            myVideoElement.style.display = 'block';
+            myCanvasElement.style.display = 'block';
+
             if (myVideoElement.srcObject) {
                 myVideoElement.srcObject.getTracks().forEach(t => t.stop());
                 myVideoElement.srcObject = null;
             }
+
             const myCfg = {video: {deviceId: myId ? {exact: myId} : undefined}};
             const myStream = await navigator.mediaDevices.getUserMedia(myCfg);
             myVideoElement.srcObject = myStream;
@@ -80,6 +99,44 @@
             myCanvasElement.height = myVideoElement.videoHeight;
             myCanvasElement.style.width = myVideoElement.offsetWidth + 'px';
             myCanvasElement.style.height = myVideoElement.offsetHeight + 'px';
+        }
+
+        // ⭐ NEW: Motion Sensor Logic (collecting data)
+        function myStartMotionListener() {
+            myMotionData = []; // Clear buffer
+            
+            myMotionListener = (event) => {
+                const acc = event.accelerationIncludingGravity;
+                if (acc && myIsMotionModel) {
+                    // Collect X, Y, Z data
+                    myMotionData.push(acc.x || 0, acc.y || 0, acc.z || 0);
+                    // Update raw status (for debugging/visual confirmation)
+                    myClassificationOutputDiv.innerHTML = `Collecting Motion Data: X=${(acc.x || 0).toFixed(2)}, Y=${(acc.y || 0).toFixed(2)}, Z=${(acc.z || 0).toFixed(2)} (Buffer: ${myMotionData.length/3} pts)`;
+                }
+            };
+
+            // Request permission for iOS 13+ devices
+            if (typeof DeviceMotionEvent.requestPermission === 'function') {
+                DeviceMotionEvent.requestPermission()
+                    .then(permissionState => {
+                        if (permissionState === 'granted') {
+                            window.addEventListener('devicemotion', myMotionListener);
+                        } else {
+                            myClassificationOutputDiv.textContent = 'Motion Sensor permission denied.';
+                        }
+                    })
+                    .catch(e => myClassificationOutputDiv.textContent = `Error enabling motion: ${e.message}`);
+            } else {
+                // For Android and older iOS (where permission isn't needed)
+                window.addEventListener('devicemotion', myMotionListener);
+            }
+        }
+
+        function myStopMotionListener() {
+            if (myMotionListener) {
+                window.removeEventListener('devicemotion', myMotionListener);
+            }
+            myMotionData = [];
         }
 
         async function myGetCameras() {
@@ -102,6 +159,8 @@
             const myModelType = mySelectedOption.getAttribute('data-type');
             const myLabels = JSON.parse(mySelectedOption.getAttribute('data-labels') || '[]');
             myCurrentModelConfig = { myType: myModelType, myLabels: myLabels };
+            // ⭐ NEW: Set global flag
+            myIsMotionModel = myModelType === "motion";
 
             await myInitializeLiteRT();
 
@@ -110,10 +169,13 @@
 
             const myIn = myModel.getInputDetails()[0];
             myCurrentInputShape = myIn.shape[1];
-            myInputChannels = myIn.shape[3] || 1;
+            myInputChannels = myIn.shape.length > 3 ? myIn.shape[3] : 1; 
             myInputDtype = myIn.dtype || "float32";
-
-            myInputShapeSpan.textContent = `${myCurrentInputShape}×${myCurrentInputShape} (${myInputChannels} ch)`;
+            
+            // ⭐ NEW: Update status based on model type
+            myInputShapeSpan.textContent = myIsMotionModel ? 
+                `[${myIn.shape.join("×")}] (IMU)` : 
+                `${myCurrentInputShape}×${myCurrentInputShape} (${myInputChannels} ch)`;
             myInputDtypeSpan.textContent = myInputDtype;
 
             const myOut = myModel.getOutputDetails()[0];
@@ -123,29 +185,59 @@
         }
 
         async function myLoadModel() {
-            await myEnableWebcam(myCameraSelect.value);
+            if (myIsMotionModel) {
+                myStartMotionListener(); // ⭐ NEW: Start motion listener for motion models
+            } else {
+                await myEnableWebcam(myCameraSelect.value); // Use webcam for visual models
+            }
+            
             myIsPredicting = true;
-            // ⭐ NEW: Start the prediction loop on a timer
+            // ⭐ Start the prediction loop on a timer
             myPredictionTimerId = setInterval(myPredict, myPredictionRateMs);
         }
         
         // --- Visualization Functions (kept separate for clarity) ---
 
         async function myDrawModelOutput(myResults) {
-            myCanvasContext.clearRect(0, 0, myCanvasElement.width, myCanvasElement.height);
+            // Only clear canvas/draw video overlay for VISUAL models
+            if (!myIsMotionModel) {
+                myCanvasContext.clearRect(0, 0, myCanvasElement.width, myCanvasElement.height);
+                const myCanvasWidth = myCanvasElement.width;
+                const myCanvasHeight = myCanvasElement.height;
+                myCanvasContext.fillStyle = 'rgba(0, 0, 0, 0.4)';
+                myCanvasContext.fillRect(0, myCanvasHeight - 40, myCanvasWidth, 40);
+            }
+            
             myClassificationOutputDiv.textContent = "";
 
             if (!myCurrentModelConfig) return;
             
             const myType = myCurrentModelConfig.myType;
             const myLabels = myCurrentModelConfig.myLabels;
-            const myCanvasWidth = myCanvasElement.width;
-            const myCanvasHeight = myCanvasElement.height;
             
-            myCanvasContext.fillStyle = 'rgba(0, 0, 0, 0.4)';
-            myCanvasContext.fillRect(0, myCanvasHeight - 40, myCanvasWidth, 40);
-
+            // The logic for "object_detection", "classification", "depth", and "anomaly" is assumed to be correct 
+            // and is kept in its original place for visual models.
+            // We only need the MOTION case here for the new functionality.
+            
             switch (myType) {
+                case "motion": {
+                    const myProbabilities = myResults[0].dataSync();
+                    // Get the highest probability
+                    const myTopK = Array.from(myProbabilities)
+                        .map((myScore, myIndex) => ({ myScore, myIndex }))
+                        .sort((a, b) => b.myScore - a.myScore)
+                        .slice(0, 1);
+
+                    const myRes = myTopK[0];
+                    const myLabel = myLabels[myRes.myIndex] || `Class ${myRes.myIndex}`;
+                    
+                    myClassificationOutputDiv.innerHTML = `
+                        **MOTION DETECTED**<br>
+                        ${myLabel}: **${(myRes.myScore * 100).toFixed(2)}%**
+                    `;
+                    break;
+                }
+                // ... (Original cases for object_detection, classification, depth, anomaly)
                 case "object_detection":
                     // Simplified drawing for a single point (Fomo)
                     const myFomoOutput = myResults[0].dataSync();
@@ -156,21 +248,23 @@
                     let myMaxIndex = -1;
                     
                     for(let i = 0; i < myFomoOutput.length; i += myNumClasses + 1) {
-                         for(let c = 0; c < myNumClasses; c++) {
-                            const myScore = myFomoOutput[i + c + 1];
-                            if (myScore > myMaxScore) {
-                                myMaxScore = myScore;
-                                myMaxIndex = i;
+                            for(let c = 0; c < myNumClasses; c++) {
+                                const myScore = myFomoOutput[i + c + 1];
+                                if (myScore > myMaxScore) {
+                                    myMaxScore = myScore;
+                                    myMaxIndex = i;
+                                }
                             }
-                         }
                     }
 
                     if (myMaxScore > 0.5 && myMaxIndex !== -1) {
                         const myCellX = (myMaxIndex / (myNumClasses + 1)) % myModelDim;
                         const myCellY = Math.floor((myMaxIndex / (myNumClasses + 1)) / myModelDim);
-                        const myClassId = Math.floor((myMaxIndex - (myCellY * myModelDim * (myNumClasses + 1)) - (myCellX * (myNumClasses + 1))) / (myNumClasses + 1));
+                        const myClassId = (myMaxIndex % (myNumClasses + 1)) - 1; 
                         
                         const myBoxSize = 30;
+                        const myCanvasWidth = myCanvasElement.width;
+                        const myCanvasHeight = myCanvasElement.height;
                         const myX = (myCellX / myModelDim) * myCanvasWidth;
                         const myY = (myCellY / myModelDim) * myCanvasHeight;
                         const myLabel = myLabels[myClassId] || `label${myClassId}`;
@@ -187,14 +281,14 @@
                     break;
 
                 case "classification":
-                    const myProbabilities = myResults[0].dataSync();
-                    const myTopK = Array.from(myProbabilities)
+                    const myProbabilities_C = myResults[0].dataSync();
+                    const myTopK_C = Array.from(myProbabilities_C)
                         .map((myScore, myIndex) => ({ myScore, myIndex }))
                         .sort((a, b) => b.myScore - a.myScore)
                         .slice(0, 3);
 
                     let myOutputHtml = 'Classification Results:<br>';
-                    myTopK.forEach(myRes => {
+                    myTopK_C.forEach(myRes => {
                         const myLabel = myLabels[myRes.myIndex] || `Class ${myRes.myIndex}`;
                         myOutputHtml += `${myLabel}: **${(myRes.myScore * 100).toFixed(2)}%**<br>`;
                     });
@@ -228,10 +322,10 @@
                     myTempCanvas.height = myHeight;
                     myTempCanvas.getContext('2d').putImageData(myImageData, 0, 0);
                     
-                    myCanvasContext.drawImage(myTempCanvas, 0, 0, myCanvasWidth, myCanvasHeight);
+                    myCanvasContext.drawImage(myTempCanvas, 0, 0, myCanvasElement.width, myCanvasElement.height);
                     
                     myCanvasContext.fillStyle = 'rgba(255, 255, 255, 0.4)'; 
-                    myCanvasContext.fillRect(0, 0, myCanvasWidth, myCanvasHeight);
+                    myCanvasContext.fillRect(0, 0, myCanvasElement.width, myCanvasElement.height);
 
                     myDepthTensor.dispose();
                     myMin.dispose();
@@ -258,7 +352,7 @@
                     
                     myClassificationOutputDiv.innerHTML = myOutputText;
 
-                    myCanvasContext.fillText(myOutputText, myCanvasWidth / 2, myCanvasHeight / 2);
+                    myCanvasContext.fillText(myOutputText, myCanvasElement.width / 2, myCanvasElement.height / 2);
                     
                     break;
                     
@@ -269,41 +363,69 @@
 
         // --- Prediction Loop Change ---
         
-        // This function is now called by setInterval, not requestAnimationFrame
         async function myPredict() {
             if (!myIsPredicting || !myModel) return;
 
-            // Use requestAnimationFrame only to ensure the video frame is ready for processing,
-            // but don't use it for the prediction loop itself.
-            requestAnimationFrame(() => {
-                tf.tidy(() => {
-                    let myT = tf.browser.fromPixels(myVideoElement);
+            if (myIsMotionModel) {
+                // ⭐ NEW: Motion Model Inference Logic
+                const inputShape = myModel.getInputDetails()[0].shape;
+                // Assuming model input is [1, N, 3] or flat [1, M] where M=N*3
+                const requiredDataLength = inputShape.reduce((a, b) => a * b); 
 
-                    if (myInputChannels === 1) myT = myT.mean(2, true);
-                    myT = myT.resizeBilinear([myCurrentInputShape, myCurrentInputShape]);
+                if (myMotionData.length >= requiredDataLength) {
+                    tf.tidy(() => {
+                        // Take the required amount of data and shift the buffer
+                        const inputBuffer = myMotionData.slice(0, requiredDataLength);
+                        myMotionData = myMotionData.slice(requiredDataLength); 
+                        
+                        const myT = tf.tensor(inputBuffer, inputShape, myInputDtype);
+                        const myResults = LiteRTInterop.runWithTfjsTensors(myModel, myT);
+                        myDrawModelOutput(myResults);
+                        myResults.forEach(r => r.dispose());
+                    });
+                }
+            } else {
+                // Video Model Inference (original logic)
+                requestAnimationFrame(() => {
+                    tf.tidy(() => {
+                        let myT = tf.browser.fromPixels(myVideoElement);
 
-                    if (myInputDtype.startsWith("float")) myT = myT.div(255);
-                    else myT = myT.cast(myInputDtype);
+                        if (myInputChannels === 1) myT = myT.mean(2, true);
+                        myT = myT.resizeBilinear([myCurrentInputShape, myCurrentInputShape]);
 
-                    myT = myT.expandDims();
+                        if (myInputDtype.startsWith("float")) myT = myT.div(255);
+                        else myT = myT.cast(myInputDtype);
 
-                    const myResults = LiteRTInterop.runWithTfjsTensors(myModel, myT);
+                        myT = myT.expandDims();
 
-                    // Call the visualization function
-                    myDrawModelOutput(myResults);
-                    
-                    myResults.forEach(r => r.dispose());
+                        const myResults = LiteRTInterop.runWithTfjsTensors(myModel, myT);
+
+                        myDrawModelOutput(myResults);
+                        
+                        myResults.forEach(r => r.dispose());
+                    });
                 });
-            });
-            // ⭐ Removed the recursive call to requestAnimationFrame(myPredict)
+            }
         }
 
         function myFullReset() {
             myIsPredicting = false;
-            // ⭐ NEW: Stop the prediction timer
+            // ⭐ Stop the prediction timer
             if (myPredictionTimerId) clearInterval(myPredictionTimerId); 
             myPredictionTimerId = null;
             
+            myStopMotionListener(); // ⭐ NEW: Stop motion listener
+
+            // ⭐ Robustly stop webcam stream tracks
+            if (myVideoElement.srcObject) {
+                myVideoElement.srcObject.getTracks().forEach(t => t.stop());
+                myVideoElement.srcObject = null;
+            }
+            
+            // Re-show video/canvas elements just in case the motion model hid them
+            myVideoElement.style.display = 'block';
+            myCanvasElement.style.display = 'block';
+
             if (myModel) { try { myModel.delete(); } catch {} }
             myModel = null;
             myCurrentModelConfig = null;
