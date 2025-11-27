@@ -378,7 +378,7 @@
 /* 🖼️ VISUAL MODELS (CLASSIFICATION, OBJECT DETECTION, DEPTH) */
         if (!myIsMotionOrAnomalyModel && myVideoElement.videoWidth > 0) {
             /***** 🖼️ VIDEO MODELS *****/
-           // requestAnimationFrame(() => {
+          //  requestAnimationFrame(() => {
                 tf.tidy(() => {
                     let myT = tf.browser.fromPixels(myVideoElement);
 
@@ -397,7 +397,8 @@
                     myDrawModelOutput(myResults);
                     myResults.forEach(r => r.dispose());
                 });
-            });
+          //  });
+            }
         }
 
         /*************************************************************
